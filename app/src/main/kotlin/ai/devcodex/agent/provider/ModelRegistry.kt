@@ -16,11 +16,15 @@ data class ModelMeta(
     val vision: Boolean = false,
     val reasoning: Boolean = false,
     val contextLength: Int? = null,
+    val kind: ModelKind = ModelKind.CHAT,
 ) {
     companion object {
         val UNKNOWN = ModelMeta(tools = null)
     }
 }
+
+/** 模型用途：聊天模型走 /chat/completions，生图与视频模型走媒体工具 */
+enum class ModelKind { CHAT, IMAGE, VIDEO }
 
 private data class ModelRule(
     val keywords: List<String>,       // 命中任一关键词（lowercase contains）
@@ -34,6 +38,9 @@ object ModelRegistry {
     private val F = false
 
     private val rules = listOf(
+        // ===== 媒体模型（必须排在聊天规则之前，否则 qwen/glm/doubao 等规则会先命中）=====
+        ModelRule(keywords = listOf("cogvideo", "seedance", "veo", "kling", "sora", "hailuo", "video", "t2v", "i2v"), meta = ModelMeta(F, kind = ModelKind.VIDEO)),
+        ModelRule(keywords = listOf("gpt-image", "dall-e", "cogview", "wanx", "seedream", "flux", "stable-diffusion", "sdxl", "imagen", "text-to-image", "-image"), meta = ModelMeta(F, kind = ModelKind.IMAGE)),
         // ===== OpenAI =====
         ModelRule(keywords = listOf("gpt-4o", "gpt-4.1", "gpt-4-turbo"), meta = ModelMeta(T, vision = T)),
         ModelRule(keywords = listOf("gpt-5", "gpt-6"), meta = ModelMeta(T, vision = T, reasoning = T)),
@@ -93,4 +100,10 @@ object ModelRegistry {
 
     /** 该模型请求是否应携带 tools */
     fun supportsTools(modelId: String): Boolean = lookup(modelId).tools ?: true
+
+    /** 模型用途分类 */
+    fun kindOf(modelId: String): ModelKind = lookup(modelId).kind
+
+    /** 可作为聊天主模型（排除生图与视频模型） */
+    fun isChatModel(modelId: String): Boolean = kindOf(modelId) == ModelKind.CHAT
 }

@@ -174,19 +174,30 @@ object ShellAccess {
             .redirectErrorStream(true)
             .apply { directory(ws) }
             .start()
-        val out = kotlinx.coroutines.runBlocking {
-            kotlinx.coroutines.withTimeoutOrNull(timeoutSec * 1000) {
-                val sb = StringBuilder()
-                val reader = p.inputStream.bufferedReader()
+        // 看门狗线程：阻塞读无法被协程超时打断，到点直接杀进程
+        val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
+        val watchdog = Thread {
+            try {
+                Thread.sleep(timeoutSec * 1000)
+                timedOut.set(true)
+                p.destroyForcibly()
+            } catch (_: InterruptedException) {}
+        }.apply { isDaemon = true; start() }
+        val sb = StringBuilder()
+        runCatching {
+            p.inputStream.bufferedReader().use { reader ->
+                val chunk = CharArray(4096)
                 while (true) {
-                    val line = reader.readLine() ?: break
-                    sb.appendLine(line)
+                    val n = reader.read(chunk)
+                    if (n < 0) break
+                    sb.append(chunk, 0, n)
                     if (sb.length > 60_000) break
                 }
-                sb.toString()
             }
         }
+        watchdog.interrupt()
         runCatching { p.destroyForcibly() }
+        val out: String? = if (timedOut.get()) null else sb.toString()
         val result = (out ?: "(超时 ${timeoutSec}s，已终止)").ifBlank { "(exit ok)" }
         "[sandbox|app权限] $result"
     } catch (e: Exception) { "ERROR(sandbox): ${e.message}" }

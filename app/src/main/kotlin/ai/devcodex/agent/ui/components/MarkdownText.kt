@@ -77,7 +77,7 @@ fun MarkdownText(content: String, modifier: Modifier = Modifier) {
                 }
                 is MdBlock.Table -> MdTable(block)
                 is MdBlock.Heading -> Text(
-                    inline(block.text, inlineCodeBg),
+                    inline(block.text, inlineCodeBg, MaterialTheme.colorScheme.primary),
                     style = when (block.level) {
                         1 -> MaterialTheme.typography.headlineSmall
                         2 -> MaterialTheme.typography.titleLarge
@@ -87,7 +87,7 @@ fun MarkdownText(content: String, modifier: Modifier = Modifier) {
                 )
                 is MdBlock.Bullet -> Row(Modifier.padding(start = 4.dp, bottom = 2.dp)) {
                     Text(if (block.ordered) "${block.num}. " else "•  ", style = MaterialTheme.typography.bodyLarge)
-                    Text(inline(block.text, inlineCodeBg), style = MaterialTheme.typography.bodyLarge)
+                    Text(inline(block.text, inlineCodeBg, MaterialTheme.colorScheme.primary), style = MaterialTheme.typography.bodyLarge)
                 }
                 is MdBlock.Quote -> Surface(
                     color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -95,7 +95,7 @@ fun MarkdownText(content: String, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                 ) {
                     Text(
-                        inline(block.text, inlineCodeBg),
+                        inline(block.text, inlineCodeBg, MaterialTheme.colorScheme.primary),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -106,7 +106,7 @@ fun MarkdownText(content: String, modifier: Modifier = Modifier) {
                         .background(MaterialTheme.colorScheme.outlineVariant)
                 )
                 is MdBlock.Paragraph -> Text(
-                    inline(block.text, inlineCodeBg),
+                    inline(block.text, inlineCodeBg, MaterialTheme.colorScheme.primary),
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.padding(bottom = 4.dp),
                 )
@@ -190,7 +190,7 @@ private fun blocks(src: String): List<MdBlock> {
 }
 
 /** 行内样式：`code` **bold** *italic* [text](url) ~~del~~ */
-private fun inline(text: String, codeBg: Color): AnnotatedString = buildAnnotatedString {
+private fun inline(text: String, codeBg: Color, linkColor: Color = Color(0xFF1A73E8)): AnnotatedString = buildAnnotatedString {
     var i = 0
     val t = text
     while (i < t.length) {
@@ -236,7 +236,7 @@ private fun inline(text: String, codeBg: Color): AnnotatedString = buildAnnotate
                 if (close > i && close + 1 < t.length && t[close + 1] == '(') {
                     val urlEnd = t.indexOf(')', close + 2)
                     if (urlEnd > close) {
-                        pushStyle(SpanStyle(color = Color(0xFF1A73E8), textDecoration = TextDecoration.Underline))
+                        pushStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
                         append(t.substring(i + 1, close))
                         pop()
                         i = urlEnd + 1
@@ -275,7 +275,7 @@ private fun MdTable(table: MdBlock.Table) {
             Row(Modifier.fillMaxWidth().horizontalScroll(remember { androidx.compose.foundation.ScrollState(0) })) {
                 table.headers.forEach { h ->
                     Text(
-                        inline(h, MaterialTheme.colorScheme.secondaryContainer),
+                        inline(h, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.primary),
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -296,7 +296,7 @@ private fun MdTable(table: MdBlock.Table) {
                 ) {
                     row.forEachIndexed { ci, cell ->
                         Text(
-                            inline(cell, MaterialTheme.colorScheme.secondaryContainer),
+                            inline(cell, MaterialTheme.colorScheme.secondaryContainer, MaterialTheme.colorScheme.primary),
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier
                                 .padding(horizontal = 10.dp, vertical = 6.dp)

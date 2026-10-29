@@ -173,7 +173,8 @@ class AnsiParser {
     private fun processCsiParam(byte: Int, action: (ParsedAction) -> Unit) {
         when (byte) {
             in 0x30..0x39 -> {
-                currentParam = currentParam * 10 + (byte - 0x30)
+                // 饱和累积，防止 Int 乘法溢出回绕成超大重复次数
+                currentParam = if (currentParam < 100_000) currentParam * 10 + (byte - 0x30) else currentParam
                 hasParam = true
             }
             0x3B -> {
@@ -262,11 +263,14 @@ class AnsiParser {
     private fun decodeUtf8(buf: ByteArray, len: Int): Int {
         // buf[0..len-1] is a complete UTF-8 sequence
         val b0 = buf[0].toInt() and 0xFF
-        return when {
+        val cp = when {
             len == 2 -> ((b0 and 0x1F) shl 6) or (buf[1].toInt() and 0x3F)
             len == 3 -> ((b0 and 0x0F) shl 12) or ((buf[1].toInt() and 0x3F) shl 6) or (buf[2].toInt() and 0x3F)
             len == 4 -> ((b0 and 0x07) shl 18) or ((buf[1].toInt() and 0x3F) shl 12) or ((buf[2].toInt() and 0x3F) shl 6) or (buf[3].toInt() and 0x3F)
-            else -> -1
+            else -> return 0xFFFD
         }
+        // 拒绝过长编码、代理项与超出 Unicode 范围的码点，统一替换为 U+FFFD
+        val min = when (len) { 2 -> 0x80; 3 -> 0x800; else -> 0x10000 }
+        return if (cp < min || cp > 0x10FFFF || cp in 0xD800..0xDFFF) 0xFFFD else cp
     }
 }

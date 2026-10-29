@@ -20,7 +20,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.animation.core.LinearEasing
@@ -42,6 +41,8 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Replay
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.Bolt
@@ -55,6 +56,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -67,6 +69,8 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Scaffold
@@ -197,7 +201,7 @@ fun ChatScreen(vm: AppViewModel) {
         ?: settings.providers.firstOrNull { it.isDefault }
         ?: settings.providers.firstOrNull()
     val modelLabel = session?.modelId
-        ?: defaultProvider?.enabledModels?.firstOrNull()
+        ?: defaultProvider?.enabledModels?.firstOrNull { ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -269,7 +273,7 @@ fun ChatScreen(vm: AppViewModel) {
                             Surface(
                                 color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                                         else androidx.compose.ui.graphics.Color.Transparent,
-                                shape = RoundedCornerShape(12.dp),
+                                shape = MaterialTheme.shapes.small,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 10.dp, vertical = 2.dp)
@@ -322,7 +326,7 @@ fun ChatScreen(vm: AppViewModel) {
                             // MChat 式：会话标题 + 当前模型行（Logo+名称+下拉箭头）
                             Text(session?.title ?: "DevCodex", maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                val displayModel = session?.modelId ?: settings.providers.firstOrNull { it.enabled }?.enabledModels?.firstOrNull() ?: "选择模型"
+                                val displayModel = session?.modelId ?: settings.providers.firstOrNull { it.enabled }?.enabledModels?.firstOrNull { ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) } ?: "选择模型"
                                 ai.devcodex.agent.ui.components.ModelLogo(displayModel, 16.dp)
                                 Spacer(Modifier.width(4.dp))
                                 Text(
@@ -350,21 +354,33 @@ fun ChatScreen(vm: AppViewModel) {
                         IconButton(onClick = { vm.navRequest.value = "workspace" }) {
                             Icon(Icons.Filled.Folder, "工作区")
                         }
-                        // 提供商直达（沉浸模式可达）
-                        IconButton(onClick = { vm.navRequest.value = "providers" }) {
-                            Icon(Icons.Filled.AutoAwesome, "提供商")
-                        }
-                        // 随时手动压缩会话
-                        IconButton(onClick = { vm.compactSessionNow() }) {
-                            Icon(Icons.Filled.Schedule, "压缩会话")
-                        }
-                        // 终端直达
-                        IconButton(onClick = { vm.navRequest.value = "terminal" }) {
-                            Icon(Icons.Filled.Dvr, "终端")
-                        }
                         // 沉浸模式下的设置出口（任何时候都可进）
                         IconButton(onClick = { vm.navRequest.value = "settings" }) {
                             Icon(Icons.Filled.Settings, "设置")
+                        }
+                        // 次要入口收进溢出菜单：提供商、压缩会话、终端
+                        var showMore by remember { mutableStateOf(false) }
+                        Box {
+                            IconButton(onClick = { showMore = true }) {
+                                Icon(Icons.Filled.MoreVert, "更多")
+                            }
+                            DropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("API 提供商") },
+                                    leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
+                                    onClick = { showMore = false; vm.navRequest.value = "providers" },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("压缩会话") },
+                                    leadingIcon = { Icon(Icons.Filled.Schedule, null) },
+                                    onClick = { showMore = false; vm.compactSessionNow() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("终端") },
+                                    leadingIcon = { Icon(Icons.Filled.Dvr, null) },
+                                    onClick = { showMore = false; vm.navRequest.value = "terminal" },
+                                )
+                            }
                         }
                     },
                 )
@@ -455,7 +471,7 @@ fun ChatScreen(vm: AppViewModel) {
                                     )
                                     Spacer(Modifier.width(6.dp))
                                     Column(Modifier.weight(1f)) {
-                                        if (!msg.thinking.isNullOrBlank()) ThinkingBlockInline(msg.thinking!!, settings.theme.autoCollapseThinking, msg.thinkingMs, isRunning && idx == messages.lastIndex)
+                                        if (!msg.thinking.isNullOrBlank()) ThinkingBlockInline(msg.thinking!!, settings.theme.autoCollapseThinking, msg.thinkingMs, isRunning && idx == messages.lastIndex && msg.content.isBlank() && msg.toolCalls.isEmpty())
                                         if (msg.content.isBlank() && msg.toolCalls.isEmpty() && msg.thinking.isNullOrBlank()) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
                                                 TypingDots()
@@ -488,7 +504,7 @@ fun ChatScreen(vm: AppViewModel) {
                                                 } else if (false) {
                                                 } else Column(Modifier.fillMaxWidth()) {
                                                     // Gemini 式流体：流式尾部 30 字符渐显 + ▍；完成后走 M3L 富渲染
-                                                    if (streamingNow) {
+                                                    if (false && streamingNow) {
                                                         val full = msg.content
                                                         val head = full.dropLast(24)
                                                         val tail = full.takeLast(24)
@@ -504,7 +520,7 @@ fun ChatScreen(vm: AppViewModel) {
                                                     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
                                                     androidx.compose.runtime.CompositionLocalProvider(
                                                     ai.devcodex.agent.m3l.LocalCodeTheme provides settings.theme.codeTheme,
-                                                    ai.devcodex.agent.m3l.LocalCodeBlockDark provides isSystemInDarkTheme(),
+                                                    ai.devcodex.agent.m3l.LocalCodeBlockDark provides (MaterialTheme.colorScheme.background.luminance() < 0.5f),
                                                         ai.devcodex.agent.m3l.LocalMarkdownRendererTheme provides ai.devcodex.agent.m3l.MarkdownRendererTheme(
                                                             primary = MaterialTheme.colorScheme.primary,
                                                             surface = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -542,10 +558,25 @@ fun ChatScreen(vm: AppViewModel) {
                                         }
                                         msg.toolCalls.forEach { tc ->
                                             val toolMsg = toolResults[tc.id]
-                                            ToolCard(toolMsg ?: Message(
-                                                id = tc.id, role = "tool", toolCallId = tc.id,
-                                                toolName = tc.name, toolStatus = ToolStatus.RUNNING,
-                                            ))
+                                            ToolCard(
+                                                msg = toolMsg ?: Message(
+                                                    id = tc.id, role = "tool", toolCallId = tc.id,
+                                                    toolName = tc.name, toolStatus = ToolStatus.PENDING,
+                                                ),
+                                                argsJson = tc.argsJson,
+                                                live = isRunning,
+                                            )
+                                            val pa = pendingApproval
+                                            if (pa != null && pa.first.toolCall.id == tc.id) {
+                                                ApprovalCard(
+                                                    reason = pa.first.reason,
+                                                    toolName = tc.name,
+                                                    argsJson = tc.argsJson,
+                                                    onAllow = { vm.respondApproval(granted = true, always = false) },
+                                                    onAlwaysAllow = { vm.respondApproval(granted = true, always = true) },
+                                                    onDeny = { vm.respondApproval(granted = false, always = false) },
+                                                )
+                                            }
                                         }
                                         }
                                         MessageStats(msg, session)
@@ -562,21 +593,9 @@ fun ChatScreen(vm: AppViewModel) {
                             }
                         }
                     }
-                    if (pendingApproval != null) {
-                        item(key = "approval") {
-                            ApprovalCard(
-                                reason = pendingApproval!!.first.reason,
-                                toolName = pendingApproval!!.first.toolCall.name,
-                                argsJson = pendingApproval!!.first.toolCall.argsJson,
-                                onAllow = { vm.respondApproval(granted = true, always = false) },
-                                onAlwaysAllow = { vm.respondApproval(granted = true, always = true) },
-                                onDeny = { vm.respondApproval(granted = false, always = false) },
-                            )
-                        }
-                    }
                     if (messages.isEmpty()) item { EmptyHint(onExample = { input = it }) }
                 }
-                val curModelId = session?.modelId ?: settings.providers.firstOrNull { it.enabled }?.enabledModels?.firstOrNull() ?: ""
+                val curModelId = session?.modelId ?: settings.providers.firstOrNull { it.enabled }?.enabledModels?.firstOrNull { ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) } ?: ""
                 val modelMaxCtx2 = ai.devcodex.agent.provider.ModelRegistry.lookup(curModelId).contextLength ?: Int.MAX_VALUE
                 // 斜杠命令建议浮层（输入以 / 开头）
                 if (input.startsWith("/") && input.length <= 24 && !input.contains(" ")) {
@@ -586,7 +605,7 @@ fun ChatScreen(vm: AppViewModel) {
                     val matches = cmds.filter { it.first.startsWith(input.removePrefix("/").take(2).ifBlank { "" }.let { p -> "/" + p }) || it.first.startsWith(input) }.take(8)
                     Surface(
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = MaterialTheme.shapes.medium,
                         shadowElevation = 6.dp,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
                     ) {
@@ -786,11 +805,13 @@ fun ChatScreen(vm: AppViewModel) {
                     value = query, onValueChange = { query = it },
                     placeholder = { Text("搜索模型…") },
                     singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = MaterialTheme.shapes.medium,
                     leadingIcon = { Icon(Icons.Filled.Search, null, Modifier.size(18.dp)) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
                 )
-                val activeProviders = settings.providers.filter { it.enabled && it.enabledModels.isNotEmpty() }
+                val activeProviders = settings.providers.filter { p ->
+                    p.enabled && p.enabledModels.any { ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) }
+                }
                 if (activeProviders.isEmpty()) {
                     Text(
                         "没有可用模型，请到「提供商」页配置",
@@ -812,38 +833,24 @@ fun ChatScreen(vm: AppViewModel) {
                                 modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp),
                             )
                         }
-                        val filtered = p.enabledModels.filter { it.contains(query, ignoreCase = true) }
+                        val filtered = p.enabledModels.filter {
+                            ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) && it.contains(query, ignoreCase = true)
+                        }
                         items(filtered.size, key = { p.id + '-' + filtered[it] + '-' + it }) { i ->
                             val m = filtered[i]
                             val selected = session?.modelId == m && session?.providerId == p.id
-                            // MChat 紧凑行：左侧选中色条 + 模型名 + 能力小字 + 右侧勾
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
+                            // Codex 风格行：模型名 + 灰色能力小字 + 右侧勾；选中后下方展开上下文档位
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(
-                                        if (selected) MaterialTheme.colorScheme.primaryContainer
-                                        else androidx.compose.ui.graphics.Color.Transparent,
-                                        RoundedCornerShape(14.dp),
-                                    )
+                                    .clip(RoundedCornerShape(12.dp))
                                     .clickable {
                                         vm.updateSessionModel(p.id, m)
                                         showModelPicker = false
                                     }
                                     .padding(horizontal = 16.dp, vertical = 8.dp),
                             ) {
-                                // 选中指示条（MChat selectionOffset 动画的静态版）
-                                Box(
-                                    Modifier
-                                        .width(3.dp)
-                                        .height(30.dp)
-                                        .background(
-                                            if (selected) MaterialTheme.colorScheme.primary
-                                            else androidx.compose.ui.graphics.Color.Transparent,
-                                            RoundedCornerShape(2.dp),
-                                        )
-                                )
-                                Spacer(Modifier.width(12.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 ai.devcodex.agent.ui.components.ModelLogo(m, 28.dp)
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
@@ -867,13 +874,12 @@ fun ChatScreen(vm: AppViewModel) {
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                                         modifier = Modifier.fillMaxWidth(0.9f),
                                     ) {
-                                        badges.forEach { (t, c) ->
+                                        badges.forEach { (t, _) ->
                                             Box(
                                                 Modifier
-                                                    .background(androidx.compose.ui.graphics.Color(c).copy(alpha = 0.14f), RoundedCornerShape(4.dp))
-                                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                    .padding(end = 6.dp, top = 1.dp, bottom = 1.dp)
                                             ) {
-                                                Text(t, style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color(c), maxLines = 1, softWrap = false)
+                                                Text(t, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, softWrap = false)
                                             }
                                         }
                                     }
@@ -881,7 +887,8 @@ fun ChatScreen(vm: AppViewModel) {
                                 if (selected) {
                                     Icon(Icons.Filled.CheckCircle, "已选", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                                 }
-                                // 选中模型：上下文窗口档位（检测模型支持上限）
+                            }
+                                // 选中模型：上下文窗口档位（检测模型支持上限），位于模型行下方
                                 if (selected) {
                                     val modelMax = ai.devcodex.agent.provider.ModelRegistry.lookup(m).contextLength ?: Int.MAX_VALUE
                                     val curCtx = session?.contextOverride ?: 0
@@ -889,7 +896,7 @@ fun ChatScreen(vm: AppViewModel) {
                                     val labels = mapOf(0 to "默认(${modelMax / 1024}k)", 131072 to "128k", 262144 to "256k", 524288 to "512k", 1048576 to "1M", 2097152 to "2M")
                                     androidx.compose.foundation.layout.FlowRow(
                                         horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                        modifier = Modifier.fillMaxWidth().padding(start = 15.dp, top = 2.dp, bottom = 6.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(start = 38.dp, top = 2.dp, bottom = 6.dp),
                                     ) {
                                         Text("上下文 ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 5.dp))
                                         options.forEach { opt ->
@@ -1004,7 +1011,7 @@ private fun EmptyHint(onExample: (String) -> Unit) {
         ).forEach { line ->
             Surface(
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.small,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { onExample(line) },
             ) {
                 Text(
@@ -1038,11 +1045,13 @@ private fun TypingDots() {
 
 @Composable
 private fun ThinkingBlockInline(text: String, autoCollapse: Boolean = true, thinkingMs: Long = 0, streaming: Boolean = false) {
-    var expanded by remember(autoCollapse) { mutableStateOf(!autoCollapse) }
-    // 思考自动展开/收起：流式开始展开、完成自动收起（autoCollapse 时）
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable(autoCollapse) { mutableStateOf(!autoCollapse) }
+    var wasStreaming by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(streaming) }
+    // 仅在 streaming 状态发生跳变时自动展开/收起，首次组合与列表回收不重置用户手动操作
     androidx.compose.runtime.LaunchedEffect(streaming) {
         if (streaming) expanded = true
-        else if (autoCollapse) expanded = false
+        else if (wasStreaming && autoCollapse) expanded = false
+        wasStreaming = streaming
     }
     // Operit 渐变思考：呼吸流光渐变（tertiary→primary→secondary）
     val c1 = MaterialTheme.colorScheme.tertiary
@@ -1064,13 +1073,10 @@ private fun ThinkingBlockInline(text: String, autoCollapse: Boolean = true, thin
         start = androidx.compose.ui.geometry.Offset(offset - 600f, 0f),
         end = androidx.compose.ui.geometry.Offset(offset, 0f),
     )
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = RoundedCornerShape(10.dp),
-        onClick = { expanded = !expanded },
-        modifier = Modifier.fillMaxWidth().animateContentSize().padding(bottom = 6.dp),
+    Box(
+        modifier = Modifier.fillMaxWidth().animateContentSize().padding(bottom = 6.dp).clickable { expanded = !expanded },
     ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
+        Column(Modifier.padding(horizontal = 2.dp, vertical = 4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("✻", style = MaterialTheme.typography.labelLarge, color = c1.copy(alpha = alpha))
                 Text(
@@ -1144,14 +1150,16 @@ private fun MessageStats(msg: Message, session: ChatSession? = null) {
                 ?: ai.devcodex.agent.provider.ModelRegistry.lookup(msg.model ?: "").contextLength
                 ?: 128_000)
             val pct = (ctx.toFloat() / limit).coerceIn(0f, 1f)
+            val ringTrack = MaterialTheme.colorScheme.outlineVariant
+            val ringFill = MaterialTheme.colorScheme.tertiary
             androidx.compose.foundation.Canvas(Modifier.size(14.dp)) {
                 drawArc(
-                    color = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.3f),
+                    color = ringTrack,
                     startAngle = -90f, sweepAngle = 360f, useCenter = false,
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f),
                 )
                 drawArc(
-                    color = androidx.compose.ui.graphics.Color(0xFFF59E0B),
+                    color = ringFill,
                     startAngle = -90f, sweepAngle = 360f * pct, useCenter = false,
                     style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f),
                 )
@@ -1202,8 +1210,8 @@ private fun MsgActionBar(
         }
         actBtn("复制", Icons.Filled.ContentCopy, onClick = { onCopy(msg.content) })
         if (msg.role == "user") {
-            actBtn("重发", FeatherIcons.Reply, onClick = onResend)
-            actBtn("回退", FeatherIcons.Rewind, onClick = onRewind)
+            actBtn("重发", Icons.Filled.Replay, onClick = onResend)
+            actBtn("回退", Icons.AutoMirrored.Filled.Undo, onClick = onRewind)
         }
         actBtn("删除", Icons.Filled.Delete, onClick = onDelete)
     }
@@ -1221,48 +1229,5 @@ private fun CharAvatarFallback(c: ai.devcodex.agent.data.CharacterCard) {
         contentAlignment = androidx.compose.ui.Alignment.Center,
     ) {
         Text(c.name.takeOrNull(1) ?: "角", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-    }
-}
-
-// ===== rikkahub feathericons 照搬（reply 重发 / rewind 回退）=====
-object FeatherIcons {
-    val Reply: androidx.compose.ui.graphics.vector.ImageVector by lazy {
-        androidx.compose.ui.graphics.vector.ImageVector.Builder(
-            name = "FeatherReply", defaultWidth = 24.dp, defaultHeight = 24.dp,
-            viewportWidth = 24f, viewportHeight = 24f,
-        ).apply {
-            path(
-                stroke = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Black),
-                strokeLineWidth = 2f, strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
-                strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
-            ) {
-                moveTo(9f, 17f)
-                lineTo(4f, 12f)
-                lineTo(9f, 7f)
-                moveTo(20f, 18f)
-                lineTo(20f, 16f)
-                curveTo(20f, 13.79f, 18.21f, 12f, 16f, 12f)
-                lineTo(4f, 12f)
-            }
-        }.build()
-    }
-    val Rewind: androidx.compose.ui.graphics.vector.ImageVector by lazy {
-        androidx.compose.ui.graphics.vector.ImageVector.Builder(
-            name = "FeatherRewind", defaultWidth = 24.dp, defaultHeight = 24.dp,
-            viewportWidth = 24f, viewportHeight = 24f,
-        ).apply {
-            path(
-                stroke = androidx.compose.ui.graphics.SolidColor(androidx.compose.ui.graphics.Color.Black),
-                strokeLineWidth = 2f, strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
-                strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
-            ) {
-                moveTo(11f, 19f)
-                lineTo(2f, 12f)
-                lineTo(11f, 5f)
-                moveTo(22f, 19f)
-                lineTo(13f, 12f)
-                lineTo(22f, 5f)
-            }
-        }.build()
     }
 }

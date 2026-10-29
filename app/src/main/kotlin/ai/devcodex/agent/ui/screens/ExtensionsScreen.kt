@@ -68,18 +68,19 @@ fun ExtensionsScreen(vm: AppViewModel) {
                     .newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) error("HTTP ${resp.code}")
                         val bytes = resp.body?.bytes() ?: error("空内容")
+                        // 路径穿越防护：远程清单的 name 只允许安全文件名字符，并限制内容大小
+                        if (!entry.name.matches(Regex("[A-Za-z0-9._一-龥-]+")) || entry.name == "." || entry.name == "..") error("扩展名称含非法字符")
+                        if (bytes.size > 2 * 1024 * 1024) error("扩展文件过大")
                         val ctx = BuiltinTools.appContext()
                         when (entry.type) {
                             "plugin" -> {
-                                val dir = java.io.File(ctx.filesDir, "plugins").apply { mkdirs() }
-                                java.io.File(dir, entry.name + ".json").writeBytes(bytes)
+                                ai.devcodex.agent.data.PluginRepo(ctx).installFromText(String(bytes, Charsets.UTF_8)).getOrThrow()
                             }
                             else -> {
-                                val dir = java.io.File(ctx.filesDir, "skills").apply { mkdirs() }
-                                java.io.File(dir, entry.name + ".md").writeBytes(bytes)
+                                ai.devcodex.agent.data.SkillRepo(ctx).install(String(bytes, Charsets.UTF_8)).getOrThrow()
                             }
                         }
-                        message = "✓ 已安装「${entry.name}」（AI 已可调用，插件/技能页可管理）"
+                        message = "✓ 已安装「${entry.name}」（可在${if (entry.type == "plugin") "插件" else "技能"}页管理）"
                     }
             }.getOrElse { message = "安装失败：${it.message?.take(120)}" }
         }
@@ -90,7 +91,7 @@ fun ExtensionsScreen(vm: AppViewModel) {
 
     Scaffold(topBar = {
         TopAppBar(
-            title = { Text("扩展", fontSize = 18.sp) },
+            title = { Text("扩展") },
             actions = {
                 IconButton(onClick = { scopeLaunch { load(sourceUrl) } }) { Icon(Icons.Filled.Refresh, "刷新") }
             },

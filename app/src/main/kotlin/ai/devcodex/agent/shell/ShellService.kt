@@ -8,9 +8,23 @@ class ShellService : IShellService.Stub() {
         val p = ProcessBuilder("sh", "-c", command)
             .redirectErrorStream(true)
             .start()
-        val out = p.inputStream.bufferedReader().readText()
-        p.waitFor()
-        out.ifBlank { "(exit ${p.exitValue()})" }
+        // 看门狗：阻塞读无法超时，60 秒后强杀进程
+        val watchdog = Thread {
+            try { Thread.sleep(60_000); p.destroyForcibly() } catch (_: InterruptedException) {}
+        }.apply { isDaemon = true; start() }
+        val sb = StringBuilder()
+        p.inputStream.bufferedReader().use { r ->
+            val chunk = CharArray(4096)
+            while (true) {
+                val n = r.read(chunk)
+                if (n < 0) break
+                sb.append(chunk, 0, n)
+                if (sb.length > 200_000) { p.destroyForcibly(); break }
+            }
+        }
+        watchdog.interrupt()
+        runCatching { p.waitFor() }
+        sb.toString().ifBlank { "(exit ${runCatching { p.exitValue() }.getOrDefault(-1)})" }
     } catch (e: Exception) { "ERROR: ${e.message}" }
 
     override fun read(path: String): String =

@@ -9,3 +9,7 @@
 .cxx
 app/build/
 local.properties
+.kotlin/
+/build.log
+/release.log
+/_theme_gen/

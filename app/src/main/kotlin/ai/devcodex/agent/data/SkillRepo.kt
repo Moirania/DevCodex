@@ -45,7 +45,11 @@ class SkillRepo(private val context: Context) {
         val fm = m.groupValues[1]
         val name = Regex("^name:\\s*(.+)$", RegexOption.MULTILINE).find(fm)?.groupValues?.get(1)?.trim()
             ?: throw IllegalArgumentException("frontmatter 缺少 name")
-        val dir = File(root, name.replace(Regex("[^\\w\\u4e00-\\u9fa5.-]"), "_"))
+        val safeName = name.replace(Regex("[^\\w\\u4e00-\\u9fa5.-]"), "_")
+        // 路径穿越防护：拒绝纯点号名称，并确认目录直接位于技能根目录下
+        if (safeName.isBlank() || safeName.all { it == '.' }) throw IllegalArgumentException("技能名称非法")
+        val dir = File(root, safeName)
+        if (dir.canonicalFile.parentFile != root.canonicalFile) throw IllegalArgumentException("技能名称非法")
         dir.mkdirs()
         File(dir, "SKILL.md").writeText(text.trim())
         parse(File(dir, "SKILL.md").readText(), dir) ?: throw IllegalStateException("解析失败")
@@ -90,8 +94,11 @@ class SkillRepo(private val context: Context) {
         val text = skillText ?: throw IllegalArgumentException("仓库${if (subPath.isBlank()) "根目录" else "路径 $subPath"}未找到 SKILL.md")
         val sk = install(text).getOrThrow()
         // 附属文件写入技能目录
+        val skRoot = sk.dir.canonicalFile
         extras.filter { it.first.isNotBlank() }.forEach { (rel, data) ->
-            val out = File(sk.dir, rel)
+            val out = File(sk.dir, rel).canonicalFile
+            // zip slip 防护：附属文件必须落在技能目录内
+            if (!out.path.startsWith(skRoot.path + File.separator)) return@forEach
             out.parentFile?.mkdirs()
             out.writeBytes(data)
         }
@@ -106,8 +113,11 @@ class SkillRepo(private val context: Context) {
             } ?: throw IllegalArgumentException("压缩包根目录缺少 SKILL.md")
             val text = zf.getInputStream(entry).readBytes().decodeToString()
             val sk = install(text).getOrThrow()
+            val skRoot = sk.dir.canonicalFile
             zf.entries().toList().filter { !it.isDirectory && it.name != entry.name && !it.name.contains("..") }.forEach { ex ->
-                val out = File(sk.dir, ex.name)
+                val out = File(sk.dir, ex.name).canonicalFile
+                // zip slip 防护：附属文件必须落在技能目录内
+                if (!out.path.startsWith(skRoot.path + File.separator)) return@forEach
                 out.parentFile?.mkdirs()
                 zf.getInputStream(ex).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
             }

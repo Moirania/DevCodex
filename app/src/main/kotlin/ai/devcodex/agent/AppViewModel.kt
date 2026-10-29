@@ -72,6 +72,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             settings.collect { latestSettings = it }
         }
+        // 旧审批模式与 toolPerms 一次性迁移到新权限字段（须先于设置读取生效）
+        viewModelScope.launch {
+            runCatching { settingsRepo.migratePermissionsIfNeeded() }
+            // 生图/视频工具名并入旧用户已持久化的 enabledTools（一次性）
+            runCatching { settingsRepo.migrateMediaToolsIfNeeded() }
+        }
         reloadPlugins()
         reloadSessions()
         viewModelScope.launch {
@@ -113,12 +119,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // @引用 → 附件内容注入（LLM 侧带文件正文，UI 展示保持原文）
         val display = text.trim()
         var llmContent: String? = null
+        val imagePaths = mutableListOf<String>()
         val mentions = Regex("@([\\w\\u4e00-\\u9fa5.\\-]+)").findAll(display).map { it.groupValues[1] }.toList()
         if (mentions.isNotEmpty()) {
             val sb = StringBuilder(display)
             for (name in mentions.distinct()) {
                 val entry = workspaceRepo.list().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: continue
-                if (workspaceRepo.isTextFile(entry)) {
+                if (!entry.isDir && entry.file.extension.lowercase() in setOf("png", "jpg", "jpeg", "webp")) {
+                    imagePaths += entry.relativePath
+                    sb.append("\n\n[图片 ").append(entry.name).append("]")
+                } else if (workspaceRepo.isTextFile(entry)) {
                     sb.append("\n\n[附件 ").append(entry.name).append("]\n")
                         .append(WorkspaceRepo.textPreview(entry.file, 15000))
                 } else {
@@ -130,7 +140,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val userMsg = ai.devcodex.agent.data.Message(
             id = java.util.UUID.randomUUID().toString(),
-            role = "user", content = display, llmContent = llmContent,
+            role = "user", content = display, llmContent = llmContent, imagePaths = imagePaths.toList(),
             timestamp = System.currentTimeMillis(),
         )
         val updated = session.copy(
@@ -143,13 +153,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         startAgent(updated)
     }
 
+    // run 代次：每次启动递增，旧代次的回调与收尾存盘一律丢弃，避免覆盖新状态或让已删会话复活
+    @Volatile private var runGen = 0
+    @Volatile private var runningSessionId: String? = null
+
+    /** 作废当前运行：先递增代次再取消引擎，使其后续回调与 finally 存盘全部失效 */
+    private fun invalidateRun() {
+        runGen++
+        runningJob?.cancel()
+        runningJob = null
+        runningSessionId = null
+        _pendingApproval.value = null
+        isRunning.value = false
+    }
+
     private fun startAgent(session: ChatSession) {
+        val gen = ++runGen
+        runningSessionId = session.id
         isRunning.value = true
         runningJob = viewModelScope.launch {
             var lastSave = 0L
             var finalSession = session
             try {
                 engine.run(session) { s ->
+                    if (gen != runGen) return@run
                     finalSession = s
                     // 会话守卫：用户已切走时不覆写当前会话（引擎后台继续跑并存盘）
                     val stillActive = _activeSession.value?.id == session.id
@@ -166,7 +193,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 // 请求失败明示（不再静默——模型收到失败结果会自主重试造成连环请求）
                 toast.value = "请求失败: " + (e.message ?: "未知错误").take(80)
             } finally {
+                // 旧代次已被新运行或删除/清空作废：不改 UI 状态、不存盘，避免覆盖新状态或让已删会话复活
+                if (gen != runGen) return@launch
                 isRunning.value = false
+                runningSessionId = null
                 _pendingApproval.value = null
                 // 空回复兜底：末条 assistant 无正文/无工具/无思考时补提示（修"空回复"）
                 runCatching {
@@ -203,6 +233,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearActiveSession() {
         val cur = _activeSession.value ?: return
+        // 清空前先作废运行中的引擎，避免下一次回调把旧消息列表带回来
+        if (runningSessionId == cur.id) invalidateRun()
         val cleared = cur.copy(messages = emptyList())
         _activeSession.value = cleared
         sessionRepo.save(cleared)
@@ -214,6 +246,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearMessages() {
         val cur = _activeSession.value ?: return
+        if (runningSessionId == cur.id) invalidateRun()
         val cleared = cur.copy(messages = emptyList(), summary = null)
         _activeSession.value = cleared
         sessionRepo.save(cleared)
@@ -385,6 +418,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteSession(id: String) {
+        // 先作废正在运行的同一会话，防止引擎节流存盘把文件重新写出来
+        if (runningSessionId == id) invalidateRun()
         sessionRepo.delete(id)
         if (_activeSession.value?.id == id) _activeSession.value = null
         reloadSessions()

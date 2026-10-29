@@ -520,7 +520,7 @@ object ExtraTools {
     // ============ 沙盒扩展工具（自动装包） ============
     val sandboxPkgInstall = ToolDef(
         name = "sandbox_pkg_install",
-        description = "Termux 沙盒联网安装软件包（apt）。如 python nodejs git ffmpeg rust golang openssh zip unzip 等。装完即可在 shell_exec 中使用。首次约 1-2 分钟",
+        description = "在 Linux 沙盒（优先 PRoot Ubuntu，失败回退 Termux）联网安装软件包（apt）。如 python nodejs git ffmpeg rust golang openssh zip unzip 等。装完即可在 shell_exec 中使用。首次约 1-2 分钟",
         parameters = obj {
             put("type", "object")
             put("properties", obj {
@@ -531,12 +531,12 @@ object ExtraTools {
         risk = ToolDef.Risk.MEDIUM,
     ) { args ->
         val pkgs = JsonArg.string(args, "packages") ?: return@ToolDef "ERROR: 缺少 packages"
-        ShellAccess.execSandbox("pkg install -y $pkgs 2>&1 | tail -20").take(8000)
+        ShellAccess.execSandbox("(command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y $pkgs || pkg install -y $pkgs) 2>&1 | tail -20").take(8000)
     }
 
     val pythonRun = ToolDef(
         name = "python_run",
-        description = "在 Termux 沙盒运行 Python 脚本（首次自动安装 python）。适合数据处理/爬虫/算法",
+        description = "在 Linux 沙盒运行 Python 脚本（首次自动安装 python）。适合数据处理/爬虫/算法",
         parameters = obj {
             put("type", "object")
             put("properties", obj {
@@ -552,14 +552,14 @@ object ExtraTools {
         script.writeText(code)
         val hasPy = ShellAccess.execSandbox("command -v python3")
         if (!hasPy.contains("python3")) {
-            ShellAccess.execSandbox("pkg install -y python 2>&1 | tail -3")
+            ShellAccess.execSandbox("(command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 || pkg install -y python) 2>&1 | tail -3")
         }
         ShellAccess.execSandbox("python3 ${script.absolutePath} 2>&1").take(20000)
     }
 
     val nodeRun = ToolDef(
         name = "node_run",
-        description = "在 Termux 沙盒运行 Node.js 脚本（首次自动安装 nodejs）。适合 JSON 处理/工具脚本",
+        description = "在 Linux 沙盒运行 Node.js 脚本（首次自动安装 nodejs）。适合 JSON 处理/工具脚本",
         parameters = obj {
             put("type", "object")
             put("properties", obj {
@@ -574,7 +574,7 @@ object ExtraTools {
         script.writeText(code)
         val hasNode = ShellAccess.execSandbox("command -v node")
         if (!hasNode.contains("node")) {
-            ShellAccess.execSandbox("pkg install -y nodejs 2>&1 | tail -3")
+            ShellAccess.execSandbox("(command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || pkg install -y nodejs) 2>&1 | tail -3")
         }
         ShellAccess.execSandbox("node ${script.absolutePath} 2>&1").take(20000)
     }

@@ -14,6 +14,7 @@ object CrashHandler {
     fun install(app: Application) {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            DebugLog.e("Crash", "uncaught exception in thread ${thread.name}", throwable)
             runCatching {
                 val dir = File(app.filesDir, "crash").apply { mkdirs() }
                 val name = "crash_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date()) + ".txt"

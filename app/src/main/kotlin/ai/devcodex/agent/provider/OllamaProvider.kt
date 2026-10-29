@@ -15,6 +15,7 @@ object OllamaProvider {
                 add(buildJsonObject {
                     put("role", t.role)
                     put("content", t.content)
+                    if (t.images.isNotEmpty()) put("images", buildJsonArray { t.images.forEach { add(it.base64) } })
                 })
             }
         }

@@ -31,12 +31,20 @@ data class ChatTurn(
     val toolCalls: List<ToolCall> = emptyList(),
     val toolCallId: String? = null,
     val name: String? = null,
+    /** Anthropic thinking 块原文与签名，开启 thinking 的多轮工具调用必须原样回传 */
+    val thinking: String? = null,
+    val thinkingSignature: String? = null,
+    /** 用户消息携带的图片（base64，不含 data: 前缀） */
+    val images: List<ImagePart> = emptyList(),
 )
+
+data class ImagePart(val mime: String, val base64: String)
 
 sealed interface StreamEvent {
     data class Usage(val inputTokens: Long, val outputTokens: Long, val cachedTokens: Long) : StreamEvent
     data class Delta(val text: String) : StreamEvent
     data class Reasoning(val text: String) : StreamEvent
+    data class ThinkingSignature(val signature: String) : StreamEvent
     data class ToolCallDelta(val index: Int, val id: String?, val name: String?, val argsFragment: String) : StreamEvent
     data class Done(val finishReason: String?) : StreamEvent
     data class Error(val throwable: Throwable) : StreamEvent
@@ -78,14 +86,22 @@ suspend fun streamPost(
         throw IOException("HTTP ${response.code}: $body")
     }
     val reader = BufferedReader(InputStreamReader(response.body!!.byteStream()))
-    withContext(Dispatchers.IO) {
+    val job = kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]
+    // 取消时关闭响应体，打断阻塞中的 readLine
+    val cancelHandle = job?.invokeOnCompletion { cause ->
+        if (cause != null) runCatching { response.close() }
+    }
+    try {
         while (true) {
+            if (job?.isActive == false) throw java.util.concurrent.CancellationException("已停止")
             val line = reader.readLine() ?: break
             if (line.isEmpty()) continue
             onLine(line)
         }
+    } finally {
+        cancelHandle?.dispose()
+        runCatching { response.close() }
     }
-    response.close()
     response
 }
 

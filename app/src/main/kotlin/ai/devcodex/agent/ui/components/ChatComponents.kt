@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Card
@@ -79,13 +81,39 @@ private val Mono = FontFamily.Monospace
 @Composable
 fun UserBubble(msg: Message, nick: String = "我") {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-        ai.devcodex.agent.ui.components.DynamicBubble(
-            text = msg.content,
-            backgroundColor = MaterialTheme.colorScheme.primaryContainer,
-            textColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            maxLines = 2000,
-            modifier = Modifier.widthIn(max = 340.dp),
-        )
+        Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // 随消息发送的图片缩略图（仅显示工作区内真实存在的文件）
+            if (msg.imagePaths.isNotEmpty()) {
+                val files = remember(msg.imagePaths) {
+                    val root = runCatching { ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().canonicalFile }.getOrNull()
+                    if (root == null) emptyList() else msg.imagePaths.mapNotNull { rel ->
+                        runCatching { java.io.File(root, rel).canonicalFile }.getOrNull()
+                    }.filter { it.path.startsWith(root.path + java.io.File.separator) && it.isFile }
+                }
+                if (files.isNotEmpty()) {
+                    Row(
+                        Modifier.widthIn(max = 340.dp).horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        files.forEach { f ->
+                            coil.compose.AsyncImage(
+                                model = f,
+                                contentDescription = f.name,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.size(120.dp).clip(RoundedCornerShape(12.dp)),
+                            )
+                        }
+                    }
+                }
+            }
+            ai.devcodex.agent.ui.components.DynamicBubble(
+                text = msg.content,
+                backgroundColor = MaterialTheme.colorScheme.primaryContainer,
+                textColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 2000,
+                modifier = Modifier.widthIn(max = 340.dp),
+            )
+        }
     }
 }
 
@@ -163,12 +191,12 @@ fun ThinkingBlock(text: String) {
 
 // ============ 工具卡片（rikkahub 式：图标 + 名称 + 状态 + 参数摘要） ============
 @Composable
-fun ToolCard(msg: Message) {
+fun ToolCard(msg: Message, argsJson: String = "", live: Boolean = true) {
     var expanded by remember { mutableStateOf(false) }
     val status = msg.toolStatus
     val result = msg.toolResult
-    // Operit 式流光边框：运行中渐变描边 + 呼吸
-    val running = status == ToolStatus.RUNNING || status == ToolStatus.PENDING
+    // 流光边框与转圈只在会话仍在运行且工具确实处于执行中时出现
+    val running = live && status == ToolStatus.RUNNING
     val tc1 = MaterialTheme.colorScheme.primary
     val tc2 = MaterialTheme.colorScheme.tertiary
     val breath = rememberInfiniteTransition(label = "tool")
@@ -189,7 +217,7 @@ fun ToolCard(msg: Message) {
     )
     Card(
         colors = CardDefaults.cardColors(
-            containerColor = androidx.compose.ui.graphics.Color(0xFF1A1B1E)  // MonkeyCode 终端深底
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
         ),
         border = if (running) androidx.compose.foundation.BorderStroke(1.dp, toolBrush)
                  else androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
@@ -218,11 +246,16 @@ fun ToolCard(msg: Message) {
                     modifier = Modifier.weight(1f),
                 )
                 when (status) {
-                    ToolStatus.RUNNING, ToolStatus.PENDING ->
-                        CircularProgressIndicator(Modifier.size(13.dp).alpha(tAlpha), strokeWidth = 1.5.dp)
+                    ToolStatus.RUNNING ->
+                        if (live) CircularProgressIndicator(Modifier.size(13.dp).alpha(tAlpha), strokeWidth = 1.5.dp)
+                        else Icon(Icons.Filled.Close, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ToolStatus.PENDING ->
+                        Icon(Icons.Filled.Schedule, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ToolStatus.AWAITING_APPROVAL ->
+                        Icon(Icons.Filled.Warning, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.tertiary)
                     ToolStatus.DONE -> Icon(Icons.Filled.CheckCircle, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
                     ToolStatus.ERROR -> Icon(Icons.Filled.ErrorOutline, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.error)
-                    else -> Icon(Icons.Filled.Close, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ToolStatus.DENIED -> Icon(Icons.Filled.Block, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 if (expanded) Icon(Icons.Filled.ExpandLess, null, Modifier.size(14.dp))
                 else Icon(Icons.Filled.ExpandMore, null, Modifier.size(14.dp))
@@ -230,14 +263,35 @@ fun ToolCard(msg: Message) {
             // 未展开时结果首行摘要
             if (!expanded && !result.isNullOrBlank()) {
                 Text(
-                    result.lineSequence().firstOrNull { it.isNotBlank() }?.take(56)?.plus("…") ?: "",
+                    run {
+                        val lines = result.lineSequence().filter { it.isNotBlank() }.toList()
+                        val first = lines.firstOrNull() ?: ""
+                        if (first.length > 56 || lines.size > 1) first.take(56) + "…" else first
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = Mono,
                     color = if (status == ToolStatus.ERROR) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                 )
             }
+            // 生图/视频工具结果中的 FILE: 行：在卡片内直接预览生成的媒体
+            if (status == ToolStatus.DONE) MediaPreview(result)
             if (expanded) {
+                if (argsJson.isNotBlank() && argsJson != "{}") {
+                    Text(
+                        "参数",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                    Text(
+                        argsJson.take(1200),
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = Mono,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 result?.let {
                     Text(
                         it.take(3000),
@@ -335,15 +389,16 @@ fun InputBar(
 ) {
     val effortLevels = listOf("", "low", "medium", "high", "xhigh", "max", "ultra")
     val effortLabels = mapOf("" to "Faster: Off", "low" to "Low", "medium" to "Medium", "high" to "High", "xhigh" to "xHigh", "max" to "Max", "ultra" to "Smarter: Ultra")
+    val optionsExpanded = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // rikkahub 视觉：顶部大圆角浮层容器
     Surface(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        shape = RoundedCornerShape(26.dp, 26.dp, 26.dp, 26.dp),
+        shape = MaterialTheme.shapes.extraLarge,
         tonalElevation = 0.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
         modifier = Modifier.fillMaxWidth().imePadding().padding(horizontal = 8.dp).padding(bottom = 8.dp),
     ) {
-        Column(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().animateContentSize()) {
             // Aether 式用量可视化：上下文(primary)+输出(tertiary)双段+压缩按钮
             if (ctxUsedPct >= 20) {
                 val outPct = (usageOutTokens * 100 / 4000).coerceIn(0, 30)  // 输出段按 4K 归一
@@ -401,11 +456,24 @@ fun InputBar(
                                 .clickable(enabled = support) { onCtx(opt) }
                                 .padding(horizontal = 8.dp, vertical = 3.dp),
                         ) {
-                            Text(label, style = MaterialTheme.typography.labelSmall, color = if (curCtx == opt && support) androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(label, style = MaterialTheme.typography.labelSmall, color = if (curCtx == opt && support) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
-                // ===== 第二行：推理档按钮组（7 档可选，横向滚动自适应任意屏宽） =====
+                if (running) {
+                    Spacer(Modifier.width(8.dp))
+                    Text("● 运行中", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    if (optionsExpanded.value) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    "推理档位",
+                    Modifier.size(20.dp).clickable { optionsExpanded.value = !optionsExpanded.value },
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            // 第二行：推理档按钮组（默认收起，7 档可选，横向滚动自适应任意屏宽）
+            if (optionsExpanded.value) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -427,14 +495,10 @@ fun InputBar(
                             Text(
                                 effortLabels[lv] ?: lv.ifBlank { "Off" },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (sel) androidx.compose.ui.graphics.Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                if (running) {
-                    Spacer(Modifier.width(8.dp))
-                    Text("● 运行中", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                }
                 }
             }
             Row(
@@ -447,7 +511,7 @@ fun InputBar(
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("询问 DevCodex…") },
                     maxLines = 6,
-                    shape = RoundedCornerShape(24.dp),
+                    shape = MaterialTheme.shapes.extraLarge,
                     leadingIcon = {
                         Icon(
                             Icons.Filled.AttachFile, "上传附件",

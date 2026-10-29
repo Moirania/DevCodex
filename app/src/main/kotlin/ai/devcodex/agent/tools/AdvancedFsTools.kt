@@ -18,6 +18,11 @@ object AdvancedFsTools {
         if (path.startsWith("/")) path
         else java.io.File(ai.devcodex.agent.tools.BuiltinTools.workspaceRoot(), path.removePrefix("./")).canonicalPath
 
+    /** 单引号转义：AI 给的参数一律经此拼进 shell，杜绝 \" $() 反引号注入 */
+    private fun q(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    private fun clampLines(n: Int?): Int = (n ?: 50).coerceIn(1, 5000)
+
     val fsCopy = ToolDef(
         name = "fs_copy",
         description = "复制文件或目录（递归）。相对路径=工作区",
@@ -28,10 +33,11 @@ object AdvancedFsTools {
             })
             put("required", req("src", "dst"))
         },
+        risk = ToolDef.Risk.MEDIUM,
     ) { args ->
         val src = JsonArg.string(args, "src") ?: return@ToolDef "ERROR: 缺少 src"
         val dst = JsonArg.string(args, "dst") ?: return@ToolDef "ERROR: 缺少 dst"
-        ShellAccess.exec("cp -r \"${resolve(src)}\" \"${resolve(dst)}\"").ifBlank { "OK" }
+        ShellAccess.exec("cp -r -- ${q(resolve(src))} ${q(resolve(dst))}").ifBlank { "OK" }
     }
 
     val fsMove = ToolDef(
@@ -44,10 +50,11 @@ object AdvancedFsTools {
             })
             put("required", req("src", "dst"))
         },
+        risk = ToolDef.Risk.MEDIUM,
     ) { args ->
         val src = JsonArg.string(args, "src") ?: return@ToolDef "ERROR: 缺少 src"
         val dst = JsonArg.string(args, "dst") ?: return@ToolDef "ERROR: 缺少 dst"
-        ShellAccess.exec("mv \"${resolve(src)}\" \"${resolve(dst)}\"").ifBlank { "OK" }
+        ShellAccess.exec("mv -- ${q(resolve(src))} ${q(resolve(dst))}").ifBlank { "OK" }
     }
 
     val fsMkdir = ToolDef(
@@ -59,22 +66,24 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        ShellAccess.exec("mkdir -p \"${resolve(path)}\"").ifBlank { "OK" }
+        ShellAccess.exec("mkdir -p -- ${q(resolve(path))}").ifBlank { "OK" }
     }
 
     val fsRename = ToolDef(
         name = "fs_rename",
-        description = "重命名文件或目录",
+        description = "重命名文件或目录（newName 只能是文件名，不能含 /）",
         parameters = obj {
             put("type", "object")
             put("properties", obj { put("path", obj { put("type", "string") }); put("newName", obj { put("type", "string") }) })
             put("required", req("path", "newName"))
         },
+        risk = ToolDef.Risk.MEDIUM,
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
         val name = JsonArg.string(args, "newName") ?: return@ToolDef "ERROR: 缺少 newName"
+        if (name.isBlank() || name.contains('/') || name == "." || name == "..") return@ToolDef "ERROR: newName 只能是文件名，不能含路径分隔符"
         val dir = java.io.File(resolve(path)).parentFile?.absolutePath ?: "/sdcard"
-        ShellAccess.exec("mv \"${resolve(path)}\" \"$dir/$name\"").ifBlank { "OK" }
+        ShellAccess.exec("mv -- ${q(resolve(path))} ${q("$dir/$name")}").ifBlank { "OK" }
     }
 
     val fsGrep = ToolDef(
@@ -91,7 +100,7 @@ object AdvancedFsTools {
     ) { args ->
         val pattern = JsonArg.string(args, "pattern") ?: return@ToolDef "ERROR: 缺少 pattern"
         val path = JsonArg.string(args, "path")?.let { resolve(it) } ?: resolve("")
-        ShellAccess.exec("grep -rn --include='*' -e \"$pattern\" \"$path\" 2>/dev/null | head -100").ifBlank { "(无匹配)" }
+        ShellAccess.exec("grep -rn -e ${q(pattern)} -- ${q(path)} 2>/dev/null | head -100").ifBlank { "(无匹配)" }
     }
 
     val fsFind = ToolDef(
@@ -108,7 +117,7 @@ object AdvancedFsTools {
     ) { args ->
         val name = JsonArg.string(args, "name") ?: return@ToolDef "ERROR: 缺少 name"
         val path = JsonArg.string(args, "path")?.let { resolve(it) } ?: resolve("")
-        ShellAccess.exec("find \"$path\" -name \"$name\" 2>/dev/null | head -80").ifBlank { "(无匹配)" }
+        ShellAccess.exec("find ${q(path)} -name ${q(name)} 2>/dev/null | head -80").ifBlank { "(无匹配)" }
     }
 
     val fsChmod = ToolDef(
@@ -125,7 +134,8 @@ object AdvancedFsTools {
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
         val mode = JsonArg.string(args, "mode") ?: "644"
-        ShellAccess.exec("chmod $mode \"${resolve(path)}\"").ifBlank { "OK" }
+        if (!Regex("^[0-7]{3,4}$").matches(mode)) return@ToolDef "ERROR: mode 必须是 3-4 位八进制数字"
+        ShellAccess.exec("chmod $mode -- ${q(resolve(path))}").ifBlank { "OK" }
     }
 
     val fsTail = ToolDef(
@@ -140,8 +150,8 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        val n = JsonArg.int(args, "lines") ?: 50
-        ShellAccess.exec("tail -n $n \"${resolve(path)}\"").take(12000)
+        val n = clampLines(JsonArg.int(args, "lines"))
+        ShellAccess.exec("tail -n $n -- ${q(resolve(path))}").take(12000)
     }
 
     val fsHead = ToolDef(
@@ -156,8 +166,8 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        val n = JsonArg.int(args, "lines") ?: 50
-        ShellAccess.exec("head -n $n \"${resolve(path)}\"").take(12000)
+        val n = clampLines(JsonArg.int(args, "lines"))
+        ShellAccess.exec("head -n $n -- ${q(resolve(path))}").take(12000)
     }
 
     val fsStat = ToolDef(
@@ -169,7 +179,8 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        ShellAccess.exec("ls -la \"${resolve(path)}\" 2>/dev/null || stat \"${resolve(path)}\"")
+        val p = q(resolve(path))
+        ShellAccess.exec("ls -la -- $p 2>/dev/null || stat -- $p")
     }
 
     val fsWc = ToolDef(
@@ -181,7 +192,7 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        ShellAccess.exec("wc \"${resolve(path)}\"")
+        ShellAccess.exec("wc -- ${q(resolve(path))}")
     }
 
     val all = listOf(fsCopy, fsMove, fsMkdir, fsRename, fsGrep, fsFind, fsChmod, fsTail, fsHead, fsStat, fsWc)

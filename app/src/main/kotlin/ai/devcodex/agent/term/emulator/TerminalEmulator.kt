@@ -241,8 +241,8 @@ class TerminalEmulator(cols: Int = 80, rows: Int = 24) {
             'M' -> buf.deleteLines(maxOf(1, params.getOrElse(0) { 1 }))
             '@' -> buf.insertCharacters(maxOf(1, params.getOrElse(0) { 1 }))
             'P' -> buf.deleteCharacters(maxOf(1, params.getOrElse(0) { 1 }))
-            'S' -> buf.scrollUp(maxOf(1, params.getOrElse(0) { 1 }))
-            'T' -> buf.scrollDown(maxOf(1, params.getOrElse(0) { 1 }))
+            'S' -> buf.scrollUp(minOf(rows, maxOf(1, params.getOrElse(0) { 1 })))
+            'T' -> buf.scrollDown(minOf(rows, maxOf(1, params.getOrElse(0) { 1 })))
             'r' -> {
                 val top = params.getOrElse(0) { 1 }
                 val bottom = params.getOrElse(1) { rows }

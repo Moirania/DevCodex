@@ -13,6 +13,7 @@ import ai.devcodex.agent.provider.StreamEvent
 import ai.devcodex.agent.provider.streamPost
 import ai.devcodex.agent.tools.BuiltinTools
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.serialization.json.JsonObject
@@ -59,7 +60,7 @@ class AgentEngine(
                     onFirstDelta()
                     val prevMsg = current.messages.firstOrNull { it.id == assistantId }
                     val startAt = prevMsg?.thinkStartAt ?: 0L
-                    if (startAt > 0) {
+                    if (startAt > 0 && text.isEmpty()) {
                         var settleMs = System.currentTimeMillis() - startAt
                         if (settleMs < 0 || settleMs > 3_600_000L) settleMs = 0
                         current = current.patch(assistantId) { it.copy(thinkingMs = settleMs) }
@@ -83,12 +84,29 @@ class AgentEngine(
                     onUpdate(current)
                 }
                 is StreamEvent.ToolCallDelta -> {
-                    val ex = toolAgg[ev.index]
-                    toolAgg[ev.index] = Triple(
-                        ev.id ?: ex?.first ?: "call_${ev.index}",
+                    // index 缺失时（负值）按 id 变化划分不同的工具调用
+                    val key = if (ev.index >= 0) ev.index else {
+                        val lastKey = toolAgg.keys.lastOrNull()
+                        val lastId = lastKey?.let { toolAgg[it]?.first }
+                        if (lastKey == null) 0 else if (ev.id != null && ev.id != lastId) lastKey + 1 else lastKey
+                    }
+                    val ex = toolAgg[key]
+                    toolAgg[key] = Triple(
+                        ev.id ?: ex?.first ?: "call_${assistantId.take(8)}_$key",
                         ev.name ?: ex?.second ?: "",
                         StringBuilder(ex?.third ?: "").append(ev.argsFragment),
                     )
+                    // 工具调用增量到达即写入消息，界面立刻显示工具卡片（不再等整条流结束）
+                    val liveCalls = toolAgg.values.filter { it.second.isNotBlank() }.map {
+                        ToolCall(id = it.first, name = it.second, argsJson = it.third.toString().ifBlank { "{}" })
+                    }
+                    if (liveCalls.isNotEmpty()) {
+                        current = current.patch(assistantId) { it.copy(toolCalls = liveCalls) }
+                        onUpdate(current)
+                    }
+                }
+                is StreamEvent.ThinkingSignature -> {
+                    current = current.patch(assistantId) { it.copy(thinkingSignature = (it.thinkingSignature ?: "") + ev.signature) }
                 }
                 is StreamEvent.Done -> Unit
                 is StreamEvent.Error -> throw RuntimeException(ev.throwable.message ?: "stream error")
@@ -99,14 +117,13 @@ class AgentEngine(
 
     suspend fun run(session: ChatSession, onUpdate: (ChatSession) -> Unit) {
         val s = settings()
-        engineSessionAllows.clear()
-        var failStreak = 0  // 连续失败断路器：连续 3 次请求失败直接终止（防模型自主重试连环请求）
         val provider = s.providers.find { it.id == session.providerId && it.enabled }
             ?: s.providers.firstOrNull { it.enabled && it.enabledModels.isNotEmpty() }
             ?: run { events.emit(UiEvent.Error("未配置 API 提供商，请到「提供商」页添加并拉取模型")); return }
-        val model = session.modelId?.takeIf { provider.enabledModels.contains(it) }
-            ?: provider.enabledModels.firstOrNull()
-            ?: run { events.emit(UiEvent.Error("该提供商没有启用的模型")); return }
+        val chatModels = provider.enabledModels.filter { ModelRegistry.isChatModel(it) }
+        val model = session.modelId?.takeIf { chatModels.contains(it) }
+            ?: chatModels.firstOrNull()
+            ?: run { events.emit(UiEvent.Error("该提供商没有可用的聊天模型（生图与视频模型不能作为聊天主模型）")); return }
 
         // MCP 工具拉取（启用中的服务器，单服务器 8s 超时保护）
         val mcpTools = s.mcpServers.filter { it.enabled }.flatMap { cfg ->
@@ -120,6 +137,7 @@ class AgentEngine(
         val toolDefs = BuiltinTools.all.filter { s.enabledTools.contains(it.name) } +
             ai.devcodex.agent.tools.AdvancedFsTools.all.filter { s.enabledTools.contains(it.name) } +
             ai.devcodex.agent.tools.ExtraTools.all.filter { s.enabledTools.contains(it.name) } +
+            ai.devcodex.agent.tools.MediaTools.all.filter { s.enabledTools.contains(it.name) } +
             customToolDefs(s.customTools) +
             mcpTools.map { mt ->
                 ToolDef(
@@ -168,7 +186,8 @@ class AgentEngine(
         var current = session
         try {
             var steps = 0
-            while (true) {   // 已取消最大步数限制（按用户要求），由模型自主结束循环
+            // maxAgentSteps <= 0 表示不限步数
+            while (s.maxAgentSteps <= 0 || steps < s.maxAgentSteps) {
                 steps++
 
                 // ---- 1. 流式调 LLM ----
@@ -178,10 +197,34 @@ class AgentEngine(
                         when (m.role) {
                             "user" -> {
                                 val c = (m.llmContent ?: m.content)
-                                if (c.isNotBlank()) add(ChatTurn("user", c))
+                                // 视觉模型：把随消息发送的图片读成 base64 附带；非视觉模型仅保留文本中的图片提示
+                                val imgs = if (m.imagePaths.isNotEmpty() && ai.devcodex.agent.provider.ModelRegistry.lookup(model).vision) {
+                                    m.imagePaths.mapNotNull { rel ->
+                                        runCatching {
+                                            val root = BuiltinTools.workspaceRoot().canonicalFile
+                                            val f = java.io.File(root, rel).canonicalFile
+                                            if (!f.path.startsWith(root.path + java.io.File.separator) || !f.isFile || f.length() > 8L * 1024 * 1024) return@runCatching null
+                                            val mime = when (f.extension.lowercase()) { "png" -> "image/png"; "webp" -> "image/webp"; else -> "image/jpeg" }
+                                            ai.devcodex.agent.provider.ImagePart(mime, java.util.Base64.getEncoder().encodeToString(f.readBytes()))
+                                        }.getOrNull()
+                                    }
+                                } else emptyList()
+                                if (c.isNotBlank() || imgs.isNotEmpty()) add(ChatTurn("user", c, images = imgs))
                             }
-                            "assistant" -> if (m.content.isNotBlank() || m.toolCalls.isNotEmpty()) add(ChatTurn("assistant", m.content, m.toolCalls))
+                            "assistant" -> if (m.content.isNotBlank() || m.toolCalls.isNotEmpty()) add(ChatTurn("assistant", m.content, m.toolCalls, thinking = m.thinking, thinkingSignature = m.thinkingSignature))
                             "tool" -> if (m.toolCallId != null) add(ChatTurn("tool", m.toolResult ?: "(空)", toolCallId = m.toolCallId, name = m.toolName))
+                        }
+                    }
+                }
+                // 进程被杀或崩溃后历史里可能有工具调用缺少结果，发送前补占位结果，避免网关以 400 拒绝
+                turns = buildList {
+                    val answered = turns.filter { it.role == "tool" }.mapNotNull { it.toolCallId }.toSet()
+                    turns.forEach { t ->
+                        add(t)
+                        if (t.role == "assistant") {
+                            t.toolCalls.filter { it.id !in answered }.forEach { tc ->
+                                add(ChatTurn("tool", "ERROR: 工具未执行（会话曾中断）", toolCallId = tc.id, name = tc.name))
+                            }
                         }
                     }
                 }
@@ -247,33 +290,28 @@ class AgentEngine(
                         onFirstDelta = { if (firstTokMs == 0L) firstTokMs = System.currentTimeMillis() - t0 })
                 }
 
-                try {
-                    runCatching { streamPost(LlmClient, request) { line -> current = consume(line) } }
-                        .onSuccess { failStreak = 0 }
-                        .onFailure {
-                            failStreak++
-                            if (failStreak >= 3) {
-                                events.emit(UiEvent.Error("连续 3 次请求失败，已自动停止（" + (it.message ?: "") + "）"))
-                                throw RuntimeException("连续 3 次请求失败，断路器触发")
-                            }
-                        }
-                } catch (e: Exception) {
-                    val msg = e.message ?: e.toString()
-                    if (msg.contains("HTTP 400") && effectiveSchemas.isNotEmpty()) {
-                        // 未知模型 400：降级去掉 tools 重试一次
+                // 请求：HTTP 400 且带 tools 时降级去掉 tools 重试一次；其他失败最多重试 2 次，仍失败则明确报错终止
+                var attempt = 0
+                var toolsDropped = effectiveSchemas.isEmpty()
+                while (true) {
+                    val r = runCatching { streamPost(LlmClient, request) { line -> current = consume(line) } }
+                    if (r.isSuccess) break
+                    val err = r.exceptionOrNull()!!
+                    if (err is CancellationException) throw err
+                    val msg = err.message ?: err.toString()
+                    ai.devcodex.agent.util.DebugLog.w("Agent", "request failed attempt=${attempt + 1} model=$model toolsDropped=$toolsDropped: $msg", err)
+                    // 丢弃半截流式缓冲，避免重试后内容重复
+                    text.clear(); think.clear(); toolAgg.clear()
+                    current = current.patch(assistantId) { it.copy(content = "", thinking = null, thinkingSignature = null, toolCalls = emptyList()) }
+                    onUpdate(current)
+                    if (!toolsDropped && msg.contains("HTTP 400")) {
+                        toolsDropped = true
                         request = ProviderGateway.chatRequest(provider, model, systemPrompt, turns, emptyList(), stream = true, reasoningEffort = effort)
-                        runCatching { streamPost(LlmClient, request) { line -> current = consume(line) } }
-                        .onSuccess { failStreak = 0 }
-                        .onFailure {
-                            failStreak++
-                            if (failStreak >= 3) {
-                                events.emit(UiEvent.Error("连续 3 次请求失败，已自动停止（" + (it.message ?: "") + "）"))
-                                throw RuntimeException("连续 3 次请求失败，断路器触发")
-                            }
-                        }
-                    } else {
-                        throw e
+                        continue
                     }
+                    attempt++
+                    if (attempt > 2) throw RuntimeException("请求失败，已重试 2 次：$msg")
+                    kotlinx.coroutines.delay(1000L * attempt)
                 }
 
                 val toolCalls = toolAgg.values.filter { it.second.isNotBlank() }.map {
@@ -303,6 +341,16 @@ class AgentEngine(
                 for (tc in toolCalls) {
                     val def = toolDefs.find { it.name == tc.name }
                     val toolMsgId = java.util.UUID.randomUUID().toString()
+                    // 参数完整性闸门：流被截断（如命中 max_tokens）时 JSON 不完整，丢弃并回填错误，不执行
+                    if (def != null && runCatching { ai.devcodex.agent.provider.LlmJson.parseToJsonElement(tc.argsJson) }.getOrNull() !is kotlinx.serialization.json.JsonObject) {
+                        current = current.copy(messages = current.messages + Message(
+                            id = toolMsgId, role = "tool", toolCallId = tc.id, toolName = tc.name,
+                            toolResult = "ERROR: 工具参数 JSON 不完整（参数流被截断，可能触及输出上限），已放弃执行，请缩小单次参数后重试",
+                            toolStatus = ToolStatus.ERROR, timestamp = System.currentTimeMillis(),
+                        ))
+                        onUpdate(current)
+                        continue
+                    }
                     if (def == null) {
                         current = current.copy(messages = current.messages + Message(
                             id = toolMsgId, role = "tool", toolCallId = tc.id, toolName = tc.name,
@@ -313,50 +361,72 @@ class AgentEngine(
                         continue
                     }
                     // 审批判定：用户已"总是允许"的直接放行；否则高危必审、fs_write 沙箱外必审
-                    val alwaysAllowed = s.toolPerms[tc.name] == "ALLOW" || engineSessionAllows.contains(tc.name)
-                    val approvalMode = ai.devcodex.agent.tools.BuiltinTools.appContext()
-                        .getSharedPreferences("devcodex_prefs", android.content.Context.MODE_PRIVATE)
-                        .getString("approval_mode", "ASSISTED") ?: "ASSISTED"
                     // P0 审计修复：fs_write 沙箱判定改为解析 path 后 canonical 包含判断（防 content 绕过 / 相对路径误报）
-                    val fsWriteOutside = tc.name == "fs_write" && run {
-                        val p = ai.devcodex.agent.util.JsonArg.string(tc.argsJson, "path") ?: ""
-                        val resolved = if (p.startsWith("/")) java.io.File(p)
-                                       else java.io.File(ai.devcodex.agent.tools.BuiltinTools.appContext().filesDir, "workspace/$p")
-                        val canon = runCatching { resolved.canonicalPath }.getOrDefault(resolved.absolutePath)
-                        !canon.startsWith(ai.devcodex.agent.tools.BuiltinTools.appContext().filesDir.absolutePath + "/")
-                    }
-                    val needApproval = when (approvalMode) {
-                        "FULL" -> false                                       // 全自动（终信任）
-                        "REQUEST" -> !alwaysAllowed                          // 每步必审（除非记忆允许）
-                        else -> !alwaysAllowed && (                          // ASSISTED：非 LOW 均审 + 沙箱外写必审
-                                def.risk != ToolDef.Risk.LOW || fsWriteOutside)
-                    }
-                    if (needApproval) {
-                        val reason = when (def.risk) {
-                            ToolDef.Risk.HIGH -> "高危操作，需确认：${def.description.take(50)}"
-                            else -> "沙箱外写入，需确认"
+                    // 写入类工具的越界判定：以当前工作区根为界，覆盖所有会修改文件的 fs_* 工具；无法解析的路径一律按越界处理
+                    val fsWriteOutside = run {
+                        val root = runCatching { ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().canonicalFile }.getOrNull()
+                        val keys = when (tc.name) {
+                            "fs_write", "fs_delete", "fs_mkdir", "fs_rename", "fs_chmod" -> listOf("path")
+                            "fs_copy" -> listOf("dst")
+                            "fs_move" -> listOf("src", "dst")
+                            else -> emptyList()
                         }
+                        keys.any { k ->
+                            val p = ai.devcodex.agent.util.JsonArg.string(tc.argsJson, k) ?: ""
+                            if (root == null) return@any true
+                            val f = if (p.startsWith("/")) java.io.File(p) else java.io.File(root, p.removePrefix("./"))
+                            val canon = runCatching { f.canonicalPath }.getOrNull() ?: return@any true
+                            !canon.startsWith(root.path + java.io.File.separator)
+                        }
+                    }
+                    val decision = PermissionResolver.resolve(def, s, engineSessionAllows, fsWriteOutside)
+                    if (decision.level == PermissionLevel.FORBID) {
+                        current = current.copy(messages = current.messages + Message(
+                            id = toolMsgId, role = "tool", toolCallId = tc.id, toolName = tc.name,
+                            toolResult = "ERROR: ${decision.reason}", toolStatus = ToolStatus.DENIED,
+                            timestamp = System.currentTimeMillis(),
+                        ))
+                        onUpdate(current)
+                        continue
+                    }
+                    val needApproval = decision.level == PermissionLevel.ASK
+                    // 先落一条工具消息：需审批时为 AWAITING_APPROVAL，否则直接 RUNNING
+                    current = current.copy(messages = current.messages + Message(
+                        id = toolMsgId, role = "tool", toolCallId = tc.id, toolName = tc.name,
+                        toolStatus = if (needApproval) ToolStatus.AWAITING_APPROVAL else ToolStatus.RUNNING,
+                        timestamp = System.currentTimeMillis(),
+                    ))
+                    onUpdate(current)
+                    if (needApproval) {
+                        val reason = decision.reason
                         val granted = requestApproval(ApprovalRequest(tc, reason) { true })
                         if (!granted) {
-                            current = current.copy(messages = current.messages + Message(
-                                id = toolMsgId, role = "tool", toolCallId = tc.id, toolName = tc.name,
-                                toolResult = "用户拒绝执行该操作", toolStatus = ToolStatus.DENIED,
-                                timestamp = System.currentTimeMillis(),
-                            ))
+                            current = current.patch(toolMsgId) {
+                                it.copy(toolResult = "用户拒绝执行该操作", toolStatus = ToolStatus.DENIED)
+                            }
                             onUpdate(current)
                             continue
                         }
+                        current = current.patch(toolMsgId) { it.copy(toolStatus = ToolStatus.RUNNING) }
+                        onUpdate(current)
                     }
-                    // RUNNING → 执行 → DONE
-                    current = current.copy(messages = current.messages + Message(
-                        id = toolMsgId, role = "tool", toolCallId = tc.id, toolName = tc.name,
-                        toolStatus = ToolStatus.RUNNING, timestamp = System.currentTimeMillis(),
-                    ))
-                    onUpdate(current)
-                    val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val toolT0 = System.currentTimeMillis()
+                    ai.devcodex.agent.util.DebugLog.i("Tool", "start ${tc.name} id=${tc.id} args=${tc.argsJson.take(300)}")
+                    // 工具执行超时兜底：独立 scope 不受父级等待子协程的约束，阻塞型工具不响应取消时也能按时返回
+                    val toolJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO).async {
                         runCatching { def.execute(tc.argsJson) }
                     }
-                        .getOrElse { "ERROR: ${it.message}" }
+                    val outcome: Result<String> = try {
+                        kotlinx.coroutines.withTimeoutOrNull(300_000L) { toolJob.await() }
+                            ?: Result.success("ERROR: 工具执行超时（300s），已放弃等待")
+                    } finally {
+                        if (!toolJob.isCompleted) toolJob.cancel()
+                    }
+                    val result: String = outcome.getOrElse {
+                        ai.devcodex.agent.util.DebugLog.e("Tool", "exception in ${tc.name} id=${tc.id}", it)
+                        "ERROR: ${it.message}"
+                    }
+                    ai.devcodex.agent.util.DebugLog.i("Tool", "end ${tc.name} id=${tc.id} cost=${System.currentTimeMillis() - toolT0}ms error=${result.startsWith("ERROR")} resultLen=${result.length} head=${result.take(200)}")
                     current = current.patch(toolMsgId) {
                         it.copy(toolResult = result, toolStatus = if (result.startsWith("ERROR")) ToolStatus.ERROR else ToolStatus.DONE)
                     }
@@ -364,13 +434,27 @@ class AgentEngine(
                 }
                 // ---- 3. 循环：工具结果已在消息里，下一轮带给 LLM ----
             }
-            events.emit(UiEvent.Error("执行已中止"))
+            events.emit(UiEvent.Error("已达到最大步数 ${s.maxAgentSteps}，执行已停止，可在设置中调整"))
         } catch (e: CancellationException) {
-            current = current.copy(messages = current.messages.map { m ->
-                if (m.toolStatus == ToolStatus.RUNNING) m.copy(toolStatus = ToolStatus.ERROR, toolResult = "已中断") else m
-            })
+            // 中断收尾：运行中/待审批的工具消息标记已中断，并给没有结果的工具调用补写结果，保证下一轮请求结构合法
+            val answered = current.messages.filter { it.role == "tool" }.mapNotNull { it.toolCallId }.toSet()
+            val patched = current.messages.map { m ->
+                if (m.role == "tool" && (m.toolStatus == ToolStatus.RUNNING || m.toolStatus == ToolStatus.AWAITING_APPROVAL))
+                    m.copy(toolStatus = ToolStatus.ERROR, toolResult = "已中断")
+                else m
+            }
+            val missing = patched.filter { it.role == "assistant" }.flatMap { it.toolCalls }
+                .filter { it.id !in answered }
+                .map { tc ->
+                    Message(
+                        id = java.util.UUID.randomUUID().toString(), role = "tool", toolCallId = tc.id, toolName = tc.name,
+                        toolResult = "已中断", toolStatus = ToolStatus.ERROR, timestamp = System.currentTimeMillis(),
+                    )
+                }
+            current = current.copy(messages = patched + missing)
             onUpdate(current)
         } catch (e: Exception) {
+            ai.devcodex.agent.util.DebugLog.e("Agent", "run aborted: ${e.message}", e)
             events.emit(UiEvent.Error(e.message ?: e.toString()))
             onUpdate(current)
         }

@@ -1,0 +1,22 @@
+{
+  "id": "builtin-dictionary",
+  "name": "英文词典",
+  "version": "1.0.0",
+  "author": "DevCodex 内置",
+  "description": "查询英文单词释义与例句（dictionaryapi.dev 免费服务，无需 API Key）",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "dictionary_lookup",
+      "description": "查询英文单词的词性、释义与例句",
+      "parameters": "{\"type\":\"object\",\"properties\":{\"word\":{\"type\":\"string\",\"description\":\"英文单词，如 resilient\"}},\"required\":[\"word\"]}",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.dictionaryapi.dev/api/v2/entries/en/{{word}}",
+        "headers": { "User-Agent": "DevCodex/0.3" },
+        "bodyTemplate": null,
+        "resultPath": "0.meanings"
+      }
+    }
+  ]
+}

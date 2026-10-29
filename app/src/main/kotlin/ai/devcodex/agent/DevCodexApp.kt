@@ -23,6 +23,7 @@ class DevCodexApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        ai.devcodex.agent.util.DebugLog.init(this)
         CrashHandler.install(this)
         instance = this
         settingsRepo = SettingsRepo(this)
@@ -54,13 +55,16 @@ class DevCodexApp : Application() {
 
     // 首启导入内置插件（assets/plugins/*.json，已存在则跳过）
     private fun seedPlugins() {
-        val marker = java.io.File(filesDir, ".builtin_plugins_v1")
+        val marker = java.io.File(filesDir, ".builtin_plugins_v2")
         if (marker.exists()) return
         runCatching {
+            val installed = pluginRepo.list().map { it.id }.toSet()
             assets.list("plugins")?.forEach { name ->
                 runCatching {
                     val text = assets.open("plugins/" + name).bufferedReader().readText()
-                    pluginRepo.installFromText(text)
+                    val id = Regex("\"id\"\\s*:\\s*\"([^\"]+)\"").find(text)?.groupValues?.get(1)
+                    // 已安装的内置插件保留用户的启用状态，只补装新增的
+                    if (id == null || id !in installed) pluginRepo.installFromText(text)
                 }
             }
             marker.writeText("ok")

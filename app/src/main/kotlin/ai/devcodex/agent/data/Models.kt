@@ -17,6 +17,17 @@ data class ProviderConfig(
     val enabledModels: List<String> = emptyList(),
     val enabled: Boolean = true,
     val isDefault: Boolean = false,
+    // 媒体模型：生图与视频（空串表示未配置）
+    val imageModel: String = "",
+    val videoModel: String = "",
+    val imageEndpoint: String = "",
+    val videoSubmitUrl: String = "",
+    val videoStatusUrl: String = "",
+    val videoTaskIdPath: String = "id",
+    val videoStatusPath: String = "status",
+    val videoResultPath: String = "video_url",
+    val videoSuccessValues: List<String> = listOf("succeeded", "success", "completed"),
+    val videoFailValues: List<String> = listOf("failed", "error", "cancelled"),
 ) {
     fun endpoint(): String = baseUrl.trimEnd('/')
 }
@@ -46,6 +57,7 @@ data class Message(
     val role: String,                       // user | assistant | tool | system
     val content: String = "",
     val llmContent: String? = null,         // 发给 LLM 的内容（含附件展开）
+    val imagePaths: List<String> = emptyList(), // 随消息发送的图片（工作区相对路径，发送给视觉模型时再读取转 base64）
     // 消息统计（流式结束时填充）
     val inputTokens: Long = 0,
     val outputTokens: Long = 0,
@@ -58,6 +70,7 @@ data class Message(
     val toolStatus: ToolStatus = ToolStatus.DONE,
     val toolResult: String? = null,         // 工具输出（展示用）
     val thinking: String? = null,
+    val thinkingSignature: String? = null,   // Anthropic thinking 签名，多轮工具调用回传用
     val thinkingMs: Long = 0,
     val thinkStartAt: Long = 0,   // 思考开始时间戳（跨轮稳定计时）
     val model: String? = null,
@@ -95,6 +108,12 @@ data class AppSettings(
     val theme: ThemePrefsData = ThemePrefsData(),
     val enabledTools: Set<String> = defaultTools(),
     val toolPerms: Map<String, String> = emptyMap(),  // 工具名 -> ALLOW（总是允许）；缺省=每次询问
+    // 权限层：全局默认 ALLOW/ASK/FORBID，单工具例外优先于全局；toolPerms 仅供旧数据迁移读取
+    val permissionDefault: String = "ASK",
+    val toolPermissions: Map<String, String> = emptyMap(),
+    val permissionsMigrated: Boolean = false,
+    // 媒体工具迁移：旧用户已持久化的 enabledTools 不含 image_generate / video_generate / video_status
+    val mediaToolsMigrated: Boolean = false,
     val maxAgentSteps: Int = 24,
     val autoCompact: Boolean = true,      // 自动压缩上下文（超阈值摘要旧对话）
     // MCP 服务器（Streamable HTTP / SSE）
@@ -123,6 +142,7 @@ data class AppSettings(
             "fs_copy", "fs_move", "fs_mkdir", "fs_rename", "fs_grep", "fs_find",
             "fs_chmod", "fs_tail", "fs_head", "fs_stat", "fs_wc", "app_open", "linux_exec", "ssh_exec", "ssh_forward",
             "web_search", "browser_render", "image_info", "image_convert", "pipeline_run", "bg_list", "bg_kill", "calendar_list", "calendar_add", "clipboard_write", "notify_post", "alarm_set", "share_content", "calendar_open", "sandbox_pkg_install", "python_run", "node_run",
+            "image_generate", "video_generate", "video_status",
         )
     }
 }

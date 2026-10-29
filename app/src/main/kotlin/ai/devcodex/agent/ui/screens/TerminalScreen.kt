@@ -61,7 +61,7 @@ fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("终端", style = MaterialTheme.typography.titleMedium) },
+                title = { Text("终端") },
                 navigationIcon = {
                     IconButton(onClick = { vm.navRequest.value = "back" }) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")

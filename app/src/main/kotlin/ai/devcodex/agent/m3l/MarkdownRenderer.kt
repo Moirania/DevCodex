@@ -70,7 +70,7 @@ fun MixedMarkdownLatex(
         while (true) {
             val stableText = stabilizeStreamingMarkdown(latestText)
             if (stableText != renderedText) renderedText = stableText
-            delay(240)
+            delay(90)
         }
     }
     // FontFamily→Typeface（AndroidView 需；fam 在 Composable 上下文取，remember 只做映射）

@@ -1,1 +1,22 @@
-{"name":"translate-pro","description":"翻译文本到目标语言（自动检测源语言）","method":"GET","url":"https://api.mymemory.translated.net/get?q={text}&langpair=auto|{target}","params":{"text":"待翻译文本","target":"目标语言代码如 zh/en/ja"},"responsePath":"responseData.translatedText"}
+{
+  "id": "translate-pro",
+  "name": "翻译",
+  "version": "1.1.0",
+  "author": "DevCodex 扩展源",
+  "description": "翻译文本到目标语言（MyMemory 免费服务，自动检测源语言）",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "translate_text",
+      "description": "翻译文本到目标语言。target 为语言代码，如 zh、en、ja",
+      "parameters": "{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"待翻译文本\"},\"target\":{\"type\":\"string\",\"description\":\"目标语言代码，如 zh/en/ja\"}},\"required\":[\"text\",\"target\"]}",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.mymemory.translated.net/get?q={{text}}&langpair=Autodetect%7C{{target}}",
+        "headers": { "User-Agent": "DevCodex/0.3" },
+        "bodyTemplate": null,
+        "resultPath": "responseData.translatedText"
+      }
+    }
+  ]
+}

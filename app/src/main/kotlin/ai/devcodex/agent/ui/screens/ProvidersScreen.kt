@@ -231,6 +231,16 @@ private fun ProviderEditDialog(
     var apiKey by remember { mutableStateOf(initial.apiKey) }
     var models by remember { mutableStateOf(initial.models) }
     var enabledModels by remember { mutableStateOf(initial.enabledModels) }
+    var imageModel by remember { mutableStateOf(initial.imageModel) }
+    var videoModel by remember { mutableStateOf(initial.videoModel) }
+    var imageEndpoint by remember { mutableStateOf(initial.imageEndpoint) }
+    var videoSubmitUrl by remember { mutableStateOf(initial.videoSubmitUrl) }
+    var videoStatusUrl by remember { mutableStateOf(initial.videoStatusUrl) }
+    var videoTaskIdPath by remember { mutableStateOf(initial.videoTaskIdPath) }
+    var videoStatusPath by remember { mutableStateOf(initial.videoStatusPath) }
+    var videoResultPath by remember { mutableStateOf(initial.videoResultPath) }
+    var videoSuccess by remember { mutableStateOf(initial.videoSuccessValues.joinToString(",")) }
+    var videoFail by remember { mutableStateOf(initial.videoFailValues.joinToString(",")) }
     var fetching by remember { mutableStateOf(false) }
     var fetchError by remember { mutableStateOf<String?>(null) }
     var testing by remember { mutableStateOf<String?>(null) }
@@ -308,7 +318,7 @@ private fun ProviderEditDialog(
                             androidx.compose.material3.OutlinedButton(
                                 onClick = {
                                     testing = "__conn__"; testResult = null
-                                    kotlinx.coroutines.MainScope().launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
                                         testResult = runCatching {
                                             val url = baseUrl.trim().trimEnd('/') + "/models"
                                             val req = okhttp3.Request.Builder().url(url)
@@ -360,6 +370,28 @@ private fun ProviderEditDialog(
                 }
                 fetchError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
+                // 媒体模型：生图与视频（由 Agent 工具调用，不作为聊天主模型）
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("媒体模型（生图与视频）", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "生图默认请求 Base URL 加 /images/generations（OpenAI 兼容）；视频按「提交、轮询、下载」流程，地址与字段路径按厂商文档填写，查询地址可用 {{task_id}} 占位。留空表示不启用。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        MediaField("生图模型 ID", imageModel, { imageModel = it }, "如 gpt-image-1 / cogview-4")
+                        MediaField("图片接口地址（可选）", imageEndpoint, { imageEndpoint = it }, "留空则用 Base URL/images/generations")
+                        MediaField("视频模型 ID", videoModel, { videoModel = it }, "如 cogvideox-3")
+                        MediaField("视频提交地址", videoSubmitUrl, { videoSubmitUrl = it }, "POST，完整 URL")
+                        MediaField("视频查询地址", videoStatusUrl, { videoStatusUrl = it }, "GET，含 {{task_id}}")
+                        MediaField("任务 ID 路径", videoTaskIdPath, { videoTaskIdPath = it }, "默认 id，嵌套用 data.id")
+                        MediaField("状态字段路径", videoStatusPath, { videoStatusPath = it }, "默认 status")
+                        MediaField("视频地址路径", videoResultPath, { videoResultPath = it }, "默认 video_url，数组用下标如 data.0.url")
+                        MediaField("成功状态值（逗号分隔）", videoSuccess, { videoSuccess = it }, "succeeded,success,completed")
+                        MediaField("失败状态值（逗号分隔）", videoFail, { videoFail = it }, "failed,error,cancelled")
+                    }
+                }
+
                 Text("模型（勾选启用，可手动添加）—— 当前 ${models.size} 个，已启用 ${enabledModels.size} 个：", style = MaterialTheme.typography.labelLarge)
                 // 手动添加模型行
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -404,7 +436,11 @@ private fun ProviderEditDialog(
                                 // 能力标签（内置知识库推断）
                                 val meta = ai.devcodex.agent.provider.ModelRegistry.lookup(m)
                                 val tags = buildList {
-                                    meta.tools?.let { add(if (it) "工具" else "无工具") }
+                                    when (meta.kind) {
+                                        ai.devcodex.agent.provider.ModelKind.IMAGE -> add("生图")
+                                        ai.devcodex.agent.provider.ModelKind.VIDEO -> add("视频")
+                                        else -> meta.tools?.let { add(if (it) "工具" else "无工具") }
+                                    }
                                     if (meta.vision) add("视觉")
                                     if (meta.reasoning) add("推理")
                                     meta.contextLength?.let { add("${it / 1000}k上下文") }
@@ -466,12 +502,32 @@ private fun ProviderEditDialog(
                         onSave(initial.copy(
                             name = name.ifBlank { hostOf(cleaned) }, type = type, baseUrl = cleaned,
                             apiKey = apiKey, models = models, enabledModels = enabledModels,
+                            imageModel = imageModel.trim(), videoModel = videoModel.trim(),
+                            imageEndpoint = imageEndpoint.trim(), videoSubmitUrl = videoSubmitUrl.trim(), videoStatusUrl = videoStatusUrl.trim(),
+                            videoTaskIdPath = videoTaskIdPath.trim().ifBlank { "id" },
+                            videoStatusPath = videoStatusPath.trim().ifBlank { "status" },
+                            videoResultPath = videoResultPath.trim().ifBlank { "video_url" },
+                            videoSuccessValues = videoSuccess.split(',').map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { initial.videoSuccessValues },
+                            videoFailValues = videoFail.split(',').map { it.trim() }.filter { it.isNotEmpty() }.ifEmpty { initial.videoFailValues },
                             enabled = true,
                         ))
                     }) { Text("保存") }
             }
         }
     }
+}
+
+@Composable
+private fun MediaField(label: String, value: String, onChange: (String) -> Unit, hint: String) {
+    OutlinedTextField(
+        value = value, onValueChange = onChange,
+        label = { Text(label) },
+        placeholder = { Text(hint, style = MaterialTheme.typography.bodySmall) },
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodySmall,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 private fun typeName(t: ProviderType): String = when (t) {

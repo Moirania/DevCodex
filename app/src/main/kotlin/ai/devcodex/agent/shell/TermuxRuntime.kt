@@ -84,6 +84,7 @@ object TermuxRuntime {
                     if (bash(context).isFile) bash(context).setExecutable(true, false)
                 }
             }
+            repairSymlinks(context)
             ready = true
             lastError = ""
             return true
@@ -91,6 +92,38 @@ object TermuxRuntime {
             lastError = "初始化异常: ${e.message}"
             return false
         }
+    }
+
+    /** 按 SYMLINKS.txt（目标←相对路径）补全符号链接，Java 层实现，不依赖 shell；返回新建数量 */
+    fun repairSymlinks(context: Context): Int {
+        val usr = prefix(context)
+        if (File(usr, "lib/libreadline.so.8").exists()) return 0
+        if (!bash(context).isFile) return 0
+        var created = 0
+        runCatching {
+            java.util.zip.ZipInputStream(context.assets.open("termux-bootstrap.zip").buffered()).use { zin ->
+                var entry = zin.nextEntry
+                while (entry != null) {
+                    if (entry.name == "SYMLINKS.txt") {
+                        String(zin.readBytes(), Charsets.UTF_8).lineSequence().forEach { line ->
+                            val idx = line.indexOf('←')
+                            if (idx <= 0) return@forEach
+                            val target = line.substring(0, idx)
+                            val link = File(usr, line.substring(idx + 1))
+                            if (java.nio.file.Files.isSymbolicLink(link.toPath())) return@forEach
+                            if (link.isFile && link.length() == 0L) link.delete()
+                            if (link.exists()) return@forEach
+                            link.parentFile?.mkdirs()
+                            runCatching { android.system.Os.symlink(target, link.path); created++ }
+                        }
+                        break
+                    }
+                    entry = zin.nextEntry
+                }
+            }
+        }.onFailure { ai.devcodex.agent.util.DebugLog.e("Termux", "repairSymlinks failed", it) }
+        ai.devcodex.agent.util.DebugLog.i("Termux", "repairSymlinks created=$created readline=${File(usr, "lib/libreadline.so.8").exists()}")
+        return created
     }
 
     /** bash 可跑则提示（可选） */
@@ -111,9 +144,10 @@ object TermuxRuntime {
         return try {
             // bash 优先（bionic：系统 linker + env；Operit 同款方式）
             val bash = File(usr, "bin/bash")
-            val p = if (bash.exists()) {
+            val p = if (bash.exists() && File(usr, "lib/libreadline.so.8").exists()) {
                 ProcessBuilder(bash.absolutePath, "-c", wrapped)
             } else {
+                ai.devcodex.agent.util.DebugLog.w("Termux", "bash skipped (exists=${bash.exists()}, readline=${File(usr, "lib/libreadline.so.8").exists()}), fallback to busybox sh")
                 ProcessBuilder(loader, bb, "sh", "-c", wrapped)
             }
                 .redirectErrorStream(true)
@@ -124,20 +158,38 @@ object TermuxRuntime {
                     env["HOME"] = File(usr, "home").absolutePath
                     File(usr, "home").mkdirs()
                     env["TMPDIR"] = File(usr, "tmp").absolutePath
+                    File(usr, "tmp").mkdirs()
+                    env["PREFIX"] = usr.absolutePath
                     env["LANG"] = "en_US.UTF-8"
                     env["TERM"] = "xterm-256color"
                 }
                 .start()
-            val out = kotlinx.coroutines.runBlocking {
-                kotlinx.coroutines.withTimeoutOrNull(timeoutSec * 1000) {
-                    val sb = StringBuilder()
-                    p.inputStream.bufferedReader().forEachLine { line ->
-                        sb.appendLine(line)
-                        if (sb.length > 100_000) return@forEachLine
+            // 看门狗线程：阻塞读无法被协程超时打断，到点直接杀进程
+            val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
+            val watchdog = Thread {
+                try {
+                    Thread.sleep(timeoutSec * 1000)
+                    timedOut.set(true)
+                    p.destroyForcibly()
+                } catch (_: InterruptedException) {}
+            }.apply { isDaemon = true; start() }
+            val sb = StringBuilder()
+            runCatching {
+                p.inputStream.bufferedReader().use { r ->
+                    val chunk = CharArray(4096)
+                    while (true) {
+                        val n = r.read(chunk)
+                        if (n < 0) break
+                        sb.append(chunk, 0, n)
+                        if (sb.length > 100_000) {
+                            p.destroyForcibly()
+                            break
+                        }
                     }
-                    sb.toString()
                 }
             }
+            watchdog.interrupt()
+            val out: String? = if (timedOut.get()) null else sb.toString()
             val code = runCatching { p.waitFor() }.getOrDefault(-1)
             runCatching { p.destroyForcibly() }
             val result = (out ?: "(Termux 超时 ${timeoutSec}s)")

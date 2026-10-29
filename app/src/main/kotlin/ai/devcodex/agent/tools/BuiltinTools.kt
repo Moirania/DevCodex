@@ -213,6 +213,9 @@ object BuiltinTools {
     }
 
     // ============ 记忆 ============
+    private val MEMORY_KEY_REGEX = Regex("[A-Za-z0-9._一-龥-]{1,64}")
+    private fun isSafeMemoryKey(key: String): Boolean = key.matches(MEMORY_KEY_REGEX) && key != "." && key != ".."
+
     val memorySave = ToolDef(
         name = "memory_save",
         description = "把重要信息保存到长期记忆（跨会话保留），键值对形式",
@@ -227,6 +230,9 @@ object BuiltinTools {
     ) { args ->
         val key = ai.devcodex.agent.util.JsonArg.string(args, "key") ?: "general"
         val value = ai.devcodex.agent.util.JsonArg.string(args, "value") ?: ""
+        // 路径穿越防护：键只允许安全文件名字符
+        if (!isSafeMemoryKey(key)) return@ToolDef "ERROR: 记忆键只能包含字母、数字、中文、点、下划线和连字符，长度不超过 64"
+        if (value.length > 200_000) return@ToolDef "ERROR: 记忆内容过长"
         val dir = File(appContext.filesDir, "memory").apply { mkdirs() }
         File(dir, "$key.md").writeText(value)
         "已保存到记忆: $key"
@@ -246,6 +252,8 @@ object BuiltinTools {
         val key = ai.devcodex.agent.util.JsonArg.string(args, "key")
         if (key.isNullOrBlank()) {
             dir.listFiles()?.joinToString("\n") { it.nameWithoutExtension } ?: "(记忆为空)"
+        } else if (!isSafeMemoryKey(key)) {
+            "ERROR: 记忆键只能包含字母、数字、中文、点、下划线和连字符，长度不超过 64"
         } else {
             File(dir, "$key.md").takeIf { it.exists() }?.readText()?.take(8000) ?: "(无此记忆: $key)"
         }

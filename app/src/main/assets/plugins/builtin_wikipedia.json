@@ -1,0 +1,22 @@
+{
+  "id": "builtin-wikipedia",
+  "name": "维基百科摘要",
+  "version": "1.0.0",
+  "author": "DevCodex 内置",
+  "description": "查询维基百科词条摘要（官方 REST 接口，无需 API Key）",
+  "enabled": true,
+  "tools": [
+    {
+      "name": "wiki_summary",
+      "description": "按词条标题查询英文维基百科摘要。返回词条简介文本",
+      "parameters": "{\"type\":\"object\",\"properties\":{\"title\":{\"type\":\"string\",\"description\":\"词条标题，如 Linux\"}},\"required\":[\"title\"]}",
+      "endpoint": {
+        "method": "GET",
+        "url": "https://en.wikipedia.org/api/rest_v1/page/summary/{{title}}",
+        "headers": { "User-Agent": "DevCodex/0.3" },
+        "bodyTemplate": null,
+        "resultPath": "extract"
+      }
+    }
+  ]
+}

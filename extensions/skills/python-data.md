@@ -1,3 +1,8 @@
+---
+name: python-data
+description: Python 数据处理技能。用户需要用 pandas 清洗、统计、转换数据或写简单爬虫时使用，沙盒内通过 python_run 执行。
+---
+
 # Python 数据处理技能
 
 沙盒内使用 python_run 执行。

@@ -3,7 +3,9 @@ package ai.devcodex.agent.theme
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
@@ -11,6 +13,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
 enum class ColorMode { SYSTEM, LIGHT, DARK }
@@ -25,6 +28,15 @@ data class ThemePrefs(
 )
 
 private val AMOLED_BG = Color(0xFF000000)
+
+/** 统一圆角体系：卡片、输入框、对话框、芯片共用同一组半径 */
+val DcShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp),
+)
 
 @Composable
 fun DcTheme(
@@ -64,6 +76,7 @@ fun DcTheme(
     MaterialTheme(
         colorScheme = scheme,
         typography = dcTypography(appFont = prefs.appFont, chatFont = prefs.chatFont),
+        shapes = DcShapes,
         content = content,
     )
 }
