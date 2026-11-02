@@ -428,7 +428,7 @@ fun ChatScreen(vm: AppViewModel) {
                                     MsgActionBar(
                                         msg,
                                         onCopy = { c -> clipboard.setText(AnnotatedString(c)); vm.toast.value = "已复制 · " + c.length + " 字" },
-                                        onResend = { if (msg.content.isNotBlank()) { if (isRunning) vm.toast.value = "回复进行中，稍后重发" else vm.send(msg.content) } },
+                                        onResend = { vm.resendFrom(msg.id) },
                                         onRewind = { if (isRunning) vm.toast.value = "回复进行中，稍后回退" else vm.rewindTo(msg.id) },
                                         onDelete = { if (isRunning) vm.stop(); vm.deleteMessage(msg.id) },
                                     )

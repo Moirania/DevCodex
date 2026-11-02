@@ -19,11 +19,24 @@ object PRootUbuntu {
         if (initialized && rootfsDir(ctx).resolve("bin").exists()) return true
         return runCatching {
             val prootDir = File(ctx.filesDir, "proot-bin").apply { mkdirs() }
-            // proot 二进制 + 依赖库（talloc/shmem/loader 全套，LD_LIBRARY_PATH 指 Termux usr/lib）
+            // proot 二进制 + 依赖库（talloc/shmem/termux-exec + rootfs loader，全部自带，不依赖 Termux）
             val prootBin = File(prootDir, "proot")
             if (!prootBin.exists()) {
                 ctx.assets.open("proot/proot").use { input -> prootBin.outputStream().use { input.copyTo(it) } }
                 prootBin.setExecutable(true)
+            }
+            // proot 动态依赖：libtalloc.so.2 / libandroid-shmem.so / libtermux-exec-ld-preload.so（Termux 官方 aarch64）
+            listOf("libtalloc.so.2", "libandroid-shmem.so", "libtermux-exec-ld-preload.so").forEach { lib ->
+                val f = File(prootDir, lib)
+                if (!f.exists()) runCatching {
+                    ctx.assets.open("proot/$lib").use { input -> f.outputStream().use { input.copyTo(it) } }
+                }
+            }
+            // proot rootfs exec loader（放 usr/libexec/proot/，proot 默认查找路径）
+            runCatching {
+                val lexDir = File(File(ctx.filesDir, "usr"), "libexec/proot").apply { mkdirs() }
+                val loader = File(lexDir, "loader")
+                if (!loader.exists()) ctx.assets.open("proot/loader").use { input -> loader.outputStream().use { input.copyTo(it) } }
             }
             // rootfs（大文件解压一次）
             val root = rootfsDir(ctx)
@@ -69,8 +82,10 @@ object PRootUbuntu {
         return runCatching {
             val bash = File(ctx.filesDir, "usr/bin/bash")
             val pb = if (bash.exists()) ProcessBuilder(bash.absolutePath, "-c", full) else ProcessBuilder("sh", "-c", full)
+            val prootLibDir = File(ctx.filesDir, "proot-bin").absolutePath
             pb.redirectErrorStream(true).apply {
-                environment()["LD_LIBRARY_PATH"] = termuxLib + ":" + (System.getenv("LD_LIBRARY_PATH") ?: "")
+                // proot-bin 优先：proot 自身动态依赖 talloc/shmem/termux-exec 全部自带
+                environment()["LD_LIBRARY_PATH"] = prootLibDir + ":" + termuxLib + ":" + (System.getenv("LD_LIBRARY_PATH") ?: "")
                 environment()["PATH"] = File(ctx.filesDir, "usr/bin").absolutePath + ":/system/bin:/system/xbin"
             }
             val p = pb.start()
@@ -79,9 +94,16 @@ object PRootUbuntu {
             val t = Thread { reader.forEachLine { if (out.length < 60_000) out.append(it).append('\n') } }
             t.isDaemon = true; t.start()
             val done = p.waitFor(timeoutSec.toLong(), java.util.concurrent.TimeUnit.SECONDS)
-            if (!done) { p.destroy(); return "ERROR: 超时 " + timeoutSec + "s" }
+            if (!done) {
+                // 超时强杀：destroy 对 sh→proot→命令 链不彻底，destroyForcibly + 确认退出
+                p.destroyForcibly()
+                if (!p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly()
+                return "ERROR: 命令超时（${timeoutSec}s，已终止）。长任务请让命令自身后台化（nohup … &）后轮询输出文件"
+            }
+            val code = p.exitValue()
             t.join(500)
-            out.toString().ifBlank { "(无输出)" }
+            // 空输出带 exit code：明确告知命令已执行完，避免模型误判失败而重复执行
+            out.toString().ifBlank { "(exit=$code，无标准输出)" }
         }.getOrElse { "ERROR: " + (it.message ?: "未知") }
     }
 }

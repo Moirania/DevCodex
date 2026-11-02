@@ -162,25 +162,24 @@ object TermuxRuntime {
                     env["TERM"] = "xterm-256color"
                 }
                 .start()
-            val out = kotlinx.coroutines.runBlocking {
-                kotlinx.coroutines.withTimeoutOrNull(timeoutSec * 1000) {
-                    val sb = StringBuilder()
-                    p.inputStream.bufferedReader().forEachLine { line ->
-                        sb.appendLine(line)
-                        if (sb.length > 100_000) return@forEachLine
-                    }
-                    sb.toString()
+            // 独立读线程 + 带超时 waitFor：withTimeoutOrNull 无法中断阻塞的 readLine，协程超时在这里是假的
+            val out = StringBuilder()
+            val t = Thread {
+                p.inputStream.bufferedReader().forEachLine { line ->
+                    synchronized(out) { if (out.length < 100_000) out.appendLine(line) }
                 }
             }
-            val code = runCatching { p.waitFor() }.getOrDefault(-1)
-            runCatching { p.destroyForcibly() }
-            val result = (out ?: "(Termux 超时 ${timeoutSec}s)")
-            if (result.isBlank()) {
-                // busybox 输出空（真机异常兜底）：降级系统 toybox 并带诊断标记
-                val tb = ShellAccess.localExec(command, 15)
-                if (tb.isNotBlank() && !tb.startsWith("ERROR")) "[busybox空输出·exit=$code→toybox] $tb"
-                else "[busybox exit=$code 无输出；stderr 请导调试包]"
-            } else result
+            t.isDaemon = true; t.start()
+            val done = p.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+            if (!done) {
+                p.destroyForcibly()
+                if (!p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly()
+                return "ERROR: 命令超时（${timeoutSec}s，已终止）。长任务请让命令自身后台化（nohup … &）后轮询输出文件"
+            }
+            val code = p.exitValue()
+            t.join(500)
+            // 空输出不重跑命令（重复副作用），带 exit code 让模型明确命令已完成
+            synchronized(out) { out.toString() }.ifBlank { "(exit=$code，无标准输出)" }
         } catch (e: Exception) { "ERROR(termux): ${e.message}" }
     }
 }

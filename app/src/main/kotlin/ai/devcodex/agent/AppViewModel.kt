@@ -49,6 +49,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var runningJob: Job? = null
     val isRunning = MutableStateFlow(false)
 
+    // 会话写盘代数：用户对会话的主动修改 +1；引擎写盘前校验，代数不匹配则丢弃。
+    // 根因修复：停止/中断后的引擎旧消息集异步落盘，会覆盖用户已删除或回退的状态（消息复活）
+    private val sessionGen = ConcurrentHashMap<String, Long>()
+    private fun bumpGen(id: String) { sessionGen.merge(id, 1L, Long::plus) }
+
+    // 引擎只拥有 messages；元数据（模型/上下文/开关/标题）以 UI 当前值优先，防运行中修改被回滚
+    private fun mergeMeta(base: ChatSession, from: ChatSession?): ChatSession {
+        val cur = from ?: return base
+        return base.copy(
+            contextOverride = cur.contextOverride,
+            deepThink = cur.deepThink,
+            webSearch = cur.webSearch,
+            providerId = cur.providerId,
+            modelId = cur.modelId,
+            title = cur.title,
+        )
+    }
+
     val toast = MutableStateFlow<String?>(null)
     val navRequest = MutableStateFlow<String?>(null)   // "settings" 等页面跳转请求
     val settingsPageRequest = MutableStateFlow<String?>(null)  // 设置内子页跳转（stats 等）
@@ -149,27 +167,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             updatedAt = System.currentTimeMillis(),
         )
         _activeSession.value = updated
+        bumpGen(updated.id)
         sessionRepo.save(updated)
         startAgent(updated)
     }
 
+    /** 重发：截断该提问之后的所有消息（含回答），保留提问本身重新生成——不再追加重复提问 */
+    fun resendFrom(msgId: String) {
+        val s = _activeSession.value ?: return
+        if (isRunning.value) { toast.value = "回复进行中，稍后重发"; return }
+        val idx = s.messages.indexOfFirst { it.id == msgId && it.role == "user" }
+        if (idx < 0) return
+        val rewound = s.copy(messages = s.messages.take(idx + 1), updatedAt = System.currentTimeMillis())
+        bumpGen(rewound.id)
+        _activeSession.value = rewound
+        sessionRepo.save(rewound)
+        startAgent(rewound)
+    }
+
     private fun startAgent(session: ChatSession) {
         isRunning.value = true
+        val startGen = sessionGen[session.id] ?: 0L
         runningJob = viewModelScope.launch {
             var lastSave = 0L
             var finalSession = session
             try {
                 engine.run(session) { s ->
-                    finalSession = s
+                    val merged = mergeMeta(s, _activeSession.value?.takeIf { it.id == s.id })
+                    finalSession = merged
+                    // 代数守卫：用户已删除/回退/重发过本会话时，引擎的旧消息集不再覆盖 UI 与磁盘
+                    val genClean = sessionGen[session.id] == startGen
                     // 会话守卫：用户已切走时不覆写当前会话（引擎后台继续跑并存盘）
                     val stillActive = _activeSession.value?.id == session.id
                     // UI 节流 80ms：防 token 级全列表重组（聊久卡死/闪退根因）
-                    if (stillActive) throttledUpdate(s)
+                    if (stillActive && genClean) throttledUpdate(merged)
                     // 节流存盘：流式期间最多 1 次/秒，防每 token 写盘卡顿
                     val now = System.currentTimeMillis()
-                    if (now - lastSave > 1000) {
+                    if (now - lastSave > 1000 && genClean) {
                         lastSave = now
-                        saveSessionBg(s)
+                        saveSessionBg(merged)
                     }
                 }
             } catch (e: Exception) {
@@ -178,22 +214,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 isRunning.value = false
                 _pendingApproval.value = null
-                // 空回复兜底：末条 assistant 无正文/无工具/无思考时补提示（修"空回复"）
-                runCatching {
-                    val last = finalSession.messages.lastOrNull { it.role == "assistant" }
-                    if (last != null && last.content.isBlank() && last.toolCalls.isEmpty() && last.thinking.isNullOrBlank() && last.toolResult.isNullOrBlank()) {
-                        val fixed = last.copy(content = "（模型未返回正文：可能被截断或接口异常，请重试或换模型）")
-                        finalSession = finalSession.copy(messages = finalSession.messages.map { if (it.id == last.id) fixed else it })
-                        _activeSession.value = finalSession
+                // 停止后旧任务写回复活根修：finally 写盘前校验代数——用户若已删除/回退/重发，
+                // 引擎持有的旧消息集直接丢弃，不覆盖用户状态
+                val genClean = sessionGen[session.id] == startGen
+                if (genClean) {
+                    finalSession = mergeMeta(finalSession, _activeSession.value?.takeIf { it.id == finalSession.id })
+                    // 空回复兜底：末条 assistant 无正文/无工具/无思考时补提示（修"空回复"）
+                    runCatching {
+                        val last = finalSession.messages.lastOrNull { it.role == "assistant" }
+                        if (last != null && last.content.isBlank() && last.toolCalls.isEmpty() && last.thinking.isNullOrBlank() && last.toolResult.isNullOrBlank()) {
+                            val fixed = last.copy(content = "（模型未返回正文：可能被截断或接口异常，请重试或换模型）")
+                            finalSession = finalSession.copy(messages = finalSession.messages.map { if (it.id == last.id) fixed else it })
+                        }
                     }
+                    // 回退/截断根修：用引擎返回的最终会话直接刷新 UI（不再从磁盘读滞后版本覆盖内存）
+                    if (_activeSession.value?.id == finalSession.id) {
+                        _activeSession.value = finalSession
+                        lastUiEmit = 0
+                    }
+                    // 结束必存最终态（先存盘，UI 已是最新）
+                    saveSessionBg(finalSession)
                 }
-                // 回退/截断根修：用引擎返回的最终会话直接刷新 UI（不再从磁盘读滞后版本覆盖内存）
-                if (_activeSession.value?.id == finalSession.id) {
-                    _activeSession.value = finalSession
-                    lastUiEmit = 0
-                }
-                // 结束必存最终态（先存盘，UI 已是最新）
-                saveSessionBg(finalSession)
             }
         }
     }
@@ -213,7 +254,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearActiveSession() {
         val cur = _activeSession.value ?: return
+        if (isRunning.value) stop()
         val cleared = cur.copy(messages = emptyList())
+        bumpGen(cleared.id)
         _activeSession.value = cleared
         sessionRepo.save(cleared)
     }
@@ -224,7 +267,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearMessages() {
         val cur = _activeSession.value ?: return
+        if (isRunning.value) stop()
         val cleared = cur.copy(messages = emptyList(), summary = null)
+        bumpGen(cleared.id)
         _activeSession.value = cleared
         sessionRepo.save(cleared)
     }
@@ -248,6 +293,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val kept = msgs.subList(0, keepHead) + msgs.subList(msgs.size - keepTail, msgs.size)
         val compacted = cur.copy(messages = kept, summary = summary)
+        bumpGen(compacted.id)
         _activeSession.value = compacted
         sessionRepo.save(compacted)
     }
@@ -274,6 +320,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             model = "local",
             timestamp = System.currentTimeMillis(),
         ))
+        bumpGen(withNotice.id)
         _activeSession.value = withNotice
         sessionRepo.save(withNotice)
     }
@@ -329,6 +376,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             ai.devcodex.agent.data.Message(id = java.util.UUID.randomUUID().toString(), role = "user", content = sb.toString(), timestamp = System.currentTimeMillis()),
             ai.devcodex.agent.data.Message(id = java.util.UUID.randomUUID().toString(), role = "assistant", content = "（已了解前文摘要，继续）", timestamp = System.currentTimeMillis()),
         ) + msgs.takeLast(keepTail), updatedAt = System.currentTimeMillis())
+        bumpGen(compacted.id)
         _activeSession.value = compacted
         viewModelScope.launch { sessionRepo.save(compacted); reloadSessions() }
         toast.value = "已压缩：保留头 2 尾 6 + 摘要"
@@ -379,17 +427,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun rewindTo(msgId: String) {
         val s = _activeSession.value ?: return
+        if (isRunning.value) stop()   // 用户接管会话：终止引擎，防停止后旧消息集异步写回复活
         val idx = s.messages.indexOfFirst { it.id == msgId }
         if (idx < 0) return
         val kept = s.messages.take(idx)  // 回退到这里：删该消息及之后全部
         val rewound = s.copy(messages = kept, updatedAt = System.currentTimeMillis())
+        bumpGen(rewound.id)
         _activeSession.value = rewound
         viewModelScope.launch { sessionRepo.save(rewound); reloadSessions() }
     }
 
     fun deleteMessage(msgId: String) {
         val cur = _activeSession.value ?: return
+        if (isRunning.value) stop()
         val updated = cur.copy(messages = cur.messages.filter { it.id != msgId })
+        bumpGen(updated.id)
         _activeSession.value = updated
         sessionRepo.save(updated)
     }
