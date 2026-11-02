@@ -34,6 +34,12 @@ Jetpack Compose 编写，单 Activity 架构，支持多模型接入与本地优
 - 六档推理力度调节：Low / Medium / High / Xhigh / Max / Ultra
 - Anthropic 扩展思考（thinking）回传与展示
 
+### 系统提示词与安全边界
+
+- 自定义系统提示词：设置页编辑或从文件导入（.txt / .md / .json，json 自动提取 system_prompt 等字段）
+- 优先级：会话角色卡设定 > 全局自定义 > 内置默认
+- 工具调用安全边界（默认开启，可关闭）：附加在任何系统提示词末尾——禁止破坏性命令（rm -rf /、dd、mkfs）、禁止外传隐私数据、禁止下载执行未知可执行文件、高影响操作先说明影响并确认、写入仅限工作区
+
 ### 真实工具执行
 
 模型可调用 50 余个内置工具完成任务，执行通道按可用性自动选择：Shizuku（ADB 权限）> Root > Termux（RUN_COMMAND）> Linux 沙箱 > toybox。
