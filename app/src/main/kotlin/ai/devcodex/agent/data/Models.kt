@@ -124,6 +124,10 @@ data class AppSettings(
     val reasoningEffort: String = "",
     // 自定义工作区：空=应用私有目录；否则为绝对路径
     val workspaceDir: String = "",
+    // 全局自定义系统提示词（空=内置默认；会话角色卡设定优先于此）
+    val customSystemPrompt: String = "",
+    // 工具调用安全边界（附加在任何系统提示词末尾，防意外高危操作；可关闭）
+    val safetyBoundary: Boolean = true,
     // AXS/Termux HTTP shell 服务（如 http://127.0.0.1:8912）
     val axsUrl: String = "",
     // SSH 隧道（host/port/user/password/keyPath）

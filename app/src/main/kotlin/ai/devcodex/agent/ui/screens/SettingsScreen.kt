@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessibility
@@ -113,6 +114,7 @@ fun SettingsScreen(vm: AppViewModel) {
             Text(when (page) {
                 "theme" -> "主题与字体"
                 "tools" -> "工具与权限"
+                "prompt" -> "系统提示词"
                 "stats" -> "使用统计"
                 "skills" -> "技能"
                 "about" -> "关于"
@@ -136,6 +138,7 @@ fun SettingsScreen(vm: AppViewModel) {
         when (page) {
             "theme" -> ThemePage(vm, settings, Modifier.padding(padding))
             "tools" -> ToolsPermPage(vm, settings, Modifier.padding(padding))
+            "prompt" -> PromptPage(vm, settings, Modifier.padding(padding))
             "stats" -> ai.devcodex.agent.ui.screens.StatsScreen(vm) { page = "root" }
             "skills" -> SkillsPage(vm) { page = "root" }
             "about" -> AboutPage(Modifier.padding(padding)) { page = "root" }
@@ -165,6 +168,12 @@ fun SettingsScreen(vm: AppViewModel) {
                     supportingContent = { Text("内置工具开关 · Shizuku · Root · 无障碍") },
                     leadingContent = { Icon(Icons.Filled.Construction, null) },
                     modifier = Modifier.clickable { page = "tools" },
+                )
+                ListItem(
+                    headlineContent = { Text("系统提示词") },
+                    supportingContent = { Text((if (settings.customSystemPrompt.isBlank()) "内置默认" else "自定义 · ${settings.customSystemPrompt.take(14)}…") + (if (settings.safetyBoundary) " · 安全世界开" else "")) },
+                    leadingContent = { Icon(Icons.Filled.Notes, null) },
+                    modifier = Modifier.clickable { page = "prompt" },
                 )
                 HorizontalDivider()
                 ListItem(
@@ -1312,4 +1321,114 @@ private val GitHubIcon: androidx.compose.ui.graphics.vector.ImageVector by lazy 
             close()
         }
     }.build()
+}
+
+// ============ 系统提示词页：自定义注入（txt/md/json 导入）+ 安全边界开关 ============
+@Composable
+private fun PromptPage(vm: AppViewModel, settings: AppSettings, modifier: Modifier) {
+    var text by remember(settings.customSystemPrompt) { mutableStateOf(settings.customSystemPrompt) }
+    var showDefault by remember { mutableStateOf(false) }
+
+    // 文件导入：txt/md 原文；json 提取 system_prompt/systemPrompt/system/prompt/instructions/content 字段
+    val promptPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        runCatching {
+            val ctx = ai.devcodex.agent.tools.BuiltinTools.appContext()
+            val raw = ctx.contentResolver.openInputStream(uri)?.use { it.bufferedReader().readText() }
+                ?: error("无法读取所选文件")
+            val parsed = parsePromptFile(uri, raw)
+                ?: throw IllegalStateException("JSON 未找到 system_prompt / system / prompt / instructions / content 字段")
+            val clean = parsed.trim()
+            text = clean
+            vm.saveSettings { it.copy(customSystemPrompt = clean) }
+            vm.toast.value = "已导入并保存（${clean.length} 字）"
+        }.onFailure { vm.toast.value = "导入失败：${it.message?.take(60)}" }
+    }
+
+    Column(
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
+    ) {
+        Text("系统提示词", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "优先级：会话角色卡设定 > 全局自定义 > 内置默认。安全边界（若开启）始终附加在最末尾。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+
+        ListItem(
+            headlineContent = { Text("工具调用安全边界") },
+            supportingContent = { Text("在系统提示词末尾附加高危约束：禁破坏性命令、禁隐私外传、高影响操作先确认。建议保持开启") },
+            trailingContent = {
+                Switch(checked = settings.safetyBoundary, onCheckedChange = { on ->
+                    vm.saveSettings { it.copy(safetyBoundary = on) }
+                })
+            },
+        )
+        Spacer(Modifier.height(12.dp))
+
+        Text("自定义提示词", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "留空使用内置默认。支持导入 .txt / .md / .json 文件",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 240.dp),
+            label = { Text(if (text.isBlank()) "（当前：内置默认）" else "自定义系统提示词") },
+            placeholder = { Text("粘贴或从文件导入提示词内容…") },
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                vm.saveSettings { it.copy(customSystemPrompt = text.trim()) }
+                vm.toast.value = if (text.isBlank()) "已保存：恢复使用内置默认" else "系统提示词已保存（${text.trim().length} 字）"
+            }) { Text("保存") }
+            OutlinedButton(onClick = { promptPicker.launch("*/*") }) { Text("导入文件") }
+            TextButton(onClick = {
+                text = ""
+                vm.saveSettings { it.copy(customSystemPrompt = "") }
+                vm.toast.value = "已恢复内置默认"
+            }) { Text("恢复默认") }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        TextButton(onClick = { showDefault = !showDefault }) {
+            Text(if (showDefault) "收起内置默认提示词" else "查看内置默认提示词")
+        }
+        if (showDefault) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    ai.devcodex.agent.agent.DEFAULT_SYSTEM_PROMPT + "\n\n" + ai.devcodex.agent.agent.SAFETY_BOUNDARY,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+        }
+    }
+}
+
+/** json 取 system_prompt 等字段（含嵌套 data 兜底，兼容角色卡）；txt/md 原文返回 */
+private fun parsePromptFile(uri: android.net.Uri, raw: String): String? {
+    val trimmed = raw.trim()
+    val looksJson = trimmed.startsWith("{") || (uri.lastPathSegment ?: "").endsWith(".json", ignoreCase = true)
+    if (!looksJson) return raw
+    return runCatching {
+        val obj = org.json.JSONObject(trimmed)
+        val candidates = listOf(obj, obj.optJSONObject("data") ?: obj)
+        candidates.firstNotNullOfOrNull { o ->
+            sequenceOf("system_prompt", "systemPrompt", "system", "prompt", "instructions", "content", "description")
+                .mapNotNull { k -> o.optString(k).takeIf { it.isNotBlank() } }
+                .firstOrNull()
+        }
+    }.getOrNull()
 }
