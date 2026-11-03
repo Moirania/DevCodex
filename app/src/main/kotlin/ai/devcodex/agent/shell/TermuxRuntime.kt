@@ -66,11 +66,14 @@ object TermuxRuntime {
                         while (entries.hasMoreElements()) {
                             val e = entries.nextElement()
                             val out = File(usr, e.name)
-                            if (e.isDirectory) out.mkdirs()
-                            else {
+                            if (e.isDirectory) {
+                                out.mkdirs()
+                            } else {
                                 out.parentFile?.mkdirs()
                                 if (!out.exists()) {
                                     zf.getInputStream(e).use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+                                    // 权限：SDK ZipEntry 不暴露 unix mode；统一可读，可执行由 repairBootstrap 规则化 chmod
+                                    out.setReadable(true, false)
                                 }
                             }
                         }
@@ -85,6 +88,9 @@ object TermuxRuntime {
                 }
             }
             repairSymlinks(context)
+            // 搬迁修复：shebang/路径硬编码、apt 配置与骨架、GPG keyring、断链（幂等，含从 Termux app 目录搬迁来的旧环境）
+            runCatching { repairBootstrap(context, usr) }
+                .onFailure { ai.devcodex.agent.util.DebugLog.e("Termux", "repairBootstrap failed", it) }
             ready = true
             lastError = ""
             return true
@@ -92,6 +98,104 @@ object TermuxRuntime {
             lastError = "初始化异常: ${e.message}"
             return false
         }
+    }
+
+    /**
+     * 搬迁修复（装机诊断 33 项问题的 app 侧固化，幂等）：
+     * - shebang/正文硬编码 /data/data/com.termux → 实际 prefix（bad interpreter 根因）
+     * - 权限保底：bin、lib/apt/methods、libexec 全可执行（apt methods 600 根因）
+     * - apt.conf 全 Dir 覆盖（官方二进制默认前缀指向 com.termux）+ sources.list
+     * - var/lib/apt、var/lib/dpkg、var/cache/apt 骨架（status/arch 等）
+     * - GPG keyring 从 assets/termux-extra 落地（apt update NO_PUBKEY 根因）
+     * - 断链修复 bzcmp/bzless/zipinfo
+     */
+    private fun repairBootstrap(context: Context, usr: File) {
+        val fixedMark = File(usr.parentFile, ".bootstrap-fixed")
+        val oldPrefix = "/data/data/com.termux/files/usr"
+        val p = usr.absolutePath
+        var fixedScripts = 0
+
+        // 1) 文本路径迁移：bin/ etc/ share/ libexec/ 下非 ELF、非符号链接、<2MB 的文本文件
+        if (!fixedMark.exists()) {
+            listOf("bin", "etc", "share", "libexec").forEach { sub ->
+                val dir = File(usr, sub)
+                if (!dir.isDirectory) return@forEach
+                dir.walkTopDown().forEach { f ->
+                    if (!f.isFile || f.length() > 2_000_000) return@forEach
+                    if (java.nio.file.Files.isSymbolicLink(f.toPath())) return@forEach
+                    runCatching {
+                        val head = ByteArray(4)
+                        f.inputStream().use { ins ->
+                            val n = ins.read(head)
+                            if (n >= 4 && head[0] == 0x7f.toByte() && head[1] == 'E'.code.toByte()) return@use
+                        }
+                        val text = f.readText()
+                        if (text.contains(oldPrefix)) {
+                            f.writeText(text.replace(oldPrefix, p))
+                            fixedScripts++
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2) 权限保底：bin、lib/apt/methods、libexec（及 applets）全可执行
+        listOf("bin", "lib/apt/methods", "libexec", "bin/applets").forEach { sub ->
+            val dir = File(usr, sub)
+            if (!dir.isDirectory) return@forEach
+            dir.walkTopDown().filter { it.isFile }.forEach { it.setExecutable(true, false) }
+        }
+
+        // 3) apt.conf（官方 apt/dpkg 二进制编译前缀=com.termux，必须全量覆盖 Dir）
+        val aptEtc = File(usr, "etc/apt").apply { mkdirs() }
+        File(aptEtc, "apt.conf").writeText(
+            "Acquire::Languages \"none\";\n" +
+            "APT::Get::Install-Recommends \"false\";\n" +
+            "APT::Sandbox::User \"root\";\n" +
+            "Dir::State \"$p/var/lib/apt\";\n" +
+            "Dir::State::status \"$p/var/lib/dpkg/status\";\n" +
+            "Dir::Cache \"$p/var/cache/apt\";\n" +
+            "Dir::Etc \"$p/etc/apt\";\n" +
+            "Dir::Bin::methods \"$p/lib/apt/methods\";\n" +
+            "Dir::Bin::dpkg \"$p/bin/dpkg\";\n" +
+            "Dir::Bin::gzip \"$p/bin/gzip\";\n" +
+            "Dir::Bin::tar \"$p/bin/tar\";\n" +
+            "DPkg::Options { \"--root=$p\"; \"--admindir=$p/var/lib/dpkg\"; \"--log=$p/var/log/dpkg.log\"; };\n"
+        )
+        File(aptEtc, "sources.list").writeText("deb https://packages.termux.dev/apt/termux-main stable main\n")
+
+        // 4) dpkg / apt 目录骨架
+        listOf(
+            "var/lib/apt/lists/partial", "var/cache/apt/archives/partial",
+            "var/lib/dpkg/updates", "var/lib/dpkg/info", "var/lib/dpkg/triggers",
+            "var/log", "var/tmp",
+        ).forEach { File(usr, it).mkdirs() }
+        listOf("var/lib/apt/lists/lock", "var/cache/apt/archives/lock").forEach {
+            val f = File(usr, it); if (!f.exists()) f.writeText("")
+        }
+        File(usr, "var/lib/dpkg/status").let { if (!it.exists()) it.writeText("") }
+        File(usr, "var/lib/dpkg/available").let { if (!it.exists()) it.writeText("") }
+        File(usr, "var/lib/dpkg/arch").let { if (!it.exists()) it.writeText("aarch64\n") }
+
+        // 5) GPG keyring（assets/termux-extra 真身文件，不走软链）
+        runCatching {
+            val kgDir = File(aptEtc, "trusted.gpg.d").apply { mkdirs() }
+            context.assets.list("termux-extra/etc/apt/trusted.gpg.d")?.forEach { name ->
+                val f = File(kgDir, name)
+                if (!f.exists()) context.assets.open("termux-extra/etc/apt/trusted.gpg.d/$name").use { i -> f.outputStream().use { o -> i.copyTo(o) } }
+            }
+        }
+
+        // 6) 断链修复：bzcmp→bzdiff、bzless→bzmore、zipinfo→unzip
+        listOf("bin/bzdiff" to "bin/bzcmp", "bin/bzmore" to "bin/bzless", "bin/unzip" to "bin/zipinfo").forEach { (src, ln) ->
+            val target = File(usr, src); val link = File(usr, ln)
+            if (target.isFile && !java.nio.file.Files.isSymbolicLink(link.toPath())) {
+                runCatching { if (link.exists()) link.delete(); android.system.Os.symlink(src, ln) }
+            }
+        }
+
+        fixedMark.writeText("fixed-1 scripts=$fixedScripts")
+        ai.devcodex.agent.util.DebugLog.i("Termux", "repairBootstrap done scripts=$fixedScripts")
     }
 
     /** 按 SYMLINKS.txt（目标←相对路径）补全符号链接，Java 层实现，不依赖 shell；返回新建数量 */
@@ -160,6 +264,12 @@ object TermuxRuntime {
                     env["TMPDIR"] = File(usr, "tmp").absolutePath
                     env["LANG"] = "en_US.UTF-8"
                     env["TERM"] = "xterm-256color"
+                    // HTTPS 证书（curl/wget/git 在 Termux 前缀下必须显式指定 CA）
+                    val cert = File(usr, "etc/tls/cert.pem")
+                    if (cert.isFile) {
+                        env["CURL_CA_BUNDLE"] = cert.absolutePath
+                        env["GIT_SSL_CAINFO"] = cert.absolutePath
+                    }
                 }
                 .start()
             // 独立读线程 + 带超时 waitFor：withTimeoutOrNull 无法中断阻塞的 readLine，协程超时在这里是假的
