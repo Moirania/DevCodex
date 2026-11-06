@@ -95,6 +95,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { settingsRepo.migratePermissionsIfNeeded() }
             // 生图/视频工具名并入旧用户已持久化的 enabledTools（一次性）
             runCatching { settingsRepo.migrateMediaToolsIfNeeded() }
+            // 导航默认切沉浸模式（v0.3.4，一次性）
+            runCatching { settingsRepo.migrateNavImmersiveIfNeeded() }
         }
         reloadPlugins()
         reloadSessions()
@@ -112,7 +114,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val s = id?.let { sessionRepo.get(it) } ?: sessionRepo.newSession()
         if (id == null && pendingContext > 0) {
             val withCtx = s.copy(contextOverride = pendingContext)
-            sessionRepo.save(withCtx)
+            saveSessionBg(withCtx)
             pendingContext = 0
             _activeSession.value = withCtx
         } else {
@@ -168,7 +170,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         _activeSession.value = updated
         bumpGen(updated.id)
-        sessionRepo.save(updated)
+        saveSessionBg(updated)
         startAgent(updated)
     }
 
@@ -181,8 +183,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val rewound = s.copy(messages = s.messages.take(idx + 1), updatedAt = System.currentTimeMillis())
         bumpGen(rewound.id)
         _activeSession.value = rewound
-        sessionRepo.save(rewound)
+        saveSessionBg(rewound)
         startAgent(rewound)
+    }
+
+    /** 从 assistant 消息重新生成：回退到其前面最近的 user 提问重发（AI 消息操作栏"重发"原为死按钮） */
+    fun regenerateFrom(msgId: String) {
+        val s = _activeSession.value ?: return
+        if (isRunning.value) { toast.value = "回复进行中，稍后重试"; return }
+        val idx = s.messages.indexOfFirst { it.id == msgId }
+        if (idx < 0) return
+        val userIdx = s.messages.subList(0, idx).indexOfLast { it.role == "user" }
+        if (userIdx < 0) { toast.value = "前面没有可重发的提问"; return }
+        resendFrom(s.messages[userIdx].id)
     }
 
     private fun startAgent(session: ChatSession) {
@@ -258,7 +271,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val cleared = cur.copy(messages = emptyList())
         bumpGen(cleared.id)
         _activeSession.value = cleared
-        sessionRepo.save(cleared)
+        saveSessionBg(cleared)
     }
 
     @Volatile var pendingContext: Int = 0
@@ -271,7 +284,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val cleared = cur.copy(messages = emptyList(), summary = null)
         bumpGen(cleared.id)
         _activeSession.value = cleared
-        sessionRepo.save(cleared)
+        saveSessionBg(cleared)
     }
 
     fun compactNow() {
@@ -295,7 +308,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val compacted = cur.copy(messages = kept, summary = summary)
         bumpGen(compacted.id)
         _activeSession.value = compacted
-        sessionRepo.save(compacted)
+        saveSessionBg(compacted)
     }
 
     fun exportSession() {
@@ -322,7 +335,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ))
         bumpGen(withNotice.id)
         _activeSession.value = withNotice
-        sessionRepo.save(withNotice)
+        saveSessionBg(withNotice)
     }
 
     fun setSessionContext(ctx: Int) {
@@ -334,7 +347,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val updated = cur.copy(contextOverride = ctx)
         _activeSession.value = updated
-        sessionRepo.save(updated)
+        saveSessionBg(updated)
     }
 
     fun toggleSessionFlag(flag: String) {
@@ -345,14 +358,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             else -> return
         }
         _activeSession.value = updated
-        sessionRepo.save(updated)
+        saveSessionBg(updated)
     }
 
     fun updateSessionModel(providerId: String, modelId: String) {
         val cur = _activeSession.value ?: return
         val updated = cur.copy(providerId = providerId, modelId = modelId)
         _activeSession.value = updated
-        sessionRepo.save(updated)
+        saveSessionBg(updated)
     }
 
     fun getPreferences(): android.content.SharedPreferences =
@@ -378,7 +391,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         ) + msgs.takeLast(keepTail), updatedAt = System.currentTimeMillis())
         bumpGen(compacted.id)
         _activeSession.value = compacted
-        viewModelScope.launch { sessionRepo.save(compacted); reloadSessions() }
+        saveSessionBg(compacted); viewModelScope.launch { reloadSessions() }
         toast.value = "已压缩：保留头 2 尾 6 + 摘要"
     }
 
@@ -410,7 +423,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 timestamp = System.currentTimeMillis()))
         }
         val withChar = s.copy(title = "角色 · " + c.name, messages = msgs)
-        sessionRepo.save(withChar)
+        saveSessionBg(withChar)
         _activeSession.value = withChar
         reloadSessions()
     }
@@ -434,7 +447,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val rewound = s.copy(messages = kept, updatedAt = System.currentTimeMillis())
         bumpGen(rewound.id)
         _activeSession.value = rewound
-        viewModelScope.launch { sessionRepo.save(rewound); reloadSessions() }
+        saveSessionBg(rewound); viewModelScope.launch { reloadSessions() }
     }
 
     fun deleteMessage(msgId: String) {
@@ -443,7 +456,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val updated = cur.copy(messages = cur.messages.filter { it.id != msgId })
         bumpGen(updated.id)
         _activeSession.value = updated
-        sessionRepo.save(updated)
+        saveSessionBg(updated)
     }
 
     fun deleteSession(id: String) {

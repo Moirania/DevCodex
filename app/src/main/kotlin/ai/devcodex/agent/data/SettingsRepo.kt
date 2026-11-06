@@ -47,6 +47,17 @@ class SettingsRepo(private val context: Context) {
         }
     }
 
+    /** 一次性迁移（v0.3.4）：导航默认改沉浸模式；用户之后手动改回 bottom/rail 的选择保留 */
+    suspend fun migrateNavImmersiveIfNeeded() {
+        update { cur ->
+            if (cur.navImmersiveMigrated) return@update cur
+            cur.copy(
+                theme = cur.theme.copy(navPosition = "immersive"),
+                navImmersiveMigrated = true,
+            )
+        }
+    }
+
     suspend fun update(transform: (AppSettings) -> AppSettings) {
         context.dataStore.edit { p ->
             val cur = p[key]?.let { runCatching { json.decodeFromString<AppSettings>(it) }.getOrNull() } ?: AppSettings()

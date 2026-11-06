@@ -174,20 +174,23 @@ object ShellAccess {
             .redirectErrorStream(true)
             .apply { directory(ws) }
             .start()
-        val out = kotlinx.coroutines.runBlocking {
-            kotlinx.coroutines.withTimeoutOrNull(timeoutSec * 1000) {
-                val sb = StringBuilder()
-                val reader = p.inputStream.bufferedReader()
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    sb.appendLine(line)
-                    if (sb.length > 60_000) break
-                }
-                sb.toString()
+        // 读线程 + waitFor(超时)：withTimeoutOrNull 无法中断阻塞的 readLine——静默进程会永久挂死（假超时）
+        val out = StringBuilder()
+        val t = Thread {
+            p.inputStream.bufferedReader().forEachLine { line ->
+                synchronized(out) { if (out.length < 60_000) out.appendLine(line) }
             }
         }
-        runCatching { p.destroyForcibly() }
-        val result = (out ?: "(超时 ${timeoutSec}s，已终止)").ifBlank { "(exit ok)" }
+        t.isDaemon = true; t.start()
+        val done = p.waitFor(timeoutSec, java.util.concurrent.TimeUnit.SECONDS)
+        if (!done) {
+            p.destroyForcibly()
+            if (!p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly()
+            return "[sandbox|app权限] (超时 ${timeoutSec}s，已终止。长任务请后台化：nohup … & 后轮询输出文件)"
+        }
+        val code = p.exitValue()
+        t.join(400)
+        val result = synchronized(out) { out.toString() }.ifBlank { "(exit=$code，无标准输出)" }
         "[sandbox|app权限] $result"
     } catch (e: Exception) { "ERROR(sandbox): ${e.message}" }
 
@@ -223,22 +226,17 @@ object ShellAccess {
         if (p.exitValue() == 0) "OK" else "ERROR(root write): $out"
     } catch (e: Exception) { "ERROR(root write): ${e.message}" }
 
-    /** 旧 toybox 沙盒（保留备用：Linux rootfs 损坏时兜底） */
-    @Volatile private var curlEnsured = false
-    suspend fun execSandbox(command: String): String {
+    /** 沙盒执行：Ubuntu PRoot 优先，Termux 兜底，异常回退本地 toybox */
+    suspend fun execSandbox(command: String, timeoutSec: Int = 150): String {
         // 真 Termux 沙盒（bootstrap bash/apt），失败回退 busybox
         return runCatching {
             val ctx = ai.devcodex.agent.tools.BuiltinTools.appContext()
             // Ubuntu PRoot（Operit 式）：rootfs 就绪则优先完整 Linux 环境
             if (ai.devcodex.agent.shell.PRootUbuntu.ensure(ctx)) {
-                return ai.devcodex.agent.shell.PRootUbuntu.exec(ctx, command)
+                return ai.devcodex.agent.shell.PRootUbuntu.exec(ctx, command, timeoutSec)
             }
-            // 次选 Termux 沙盒：首次自动装 curl/wget
-            if (!curlEnsured) {
-                curlEnsured = true
-                runCatching { ai.devcodex.agent.shell.TermuxRuntime.exec(ctx, "command -v curl >/dev/null 2>&1 || (command -v apt >/dev/null 2>&1 && apt install -y curl wget 2>/dev/null) || true", timeoutSec = 120) }
-            }
-            ai.devcodex.agent.shell.TermuxRuntime.exec(ctx, command, timeoutSec = 150)
+            // 次选 Termux 沙盒（bootstrap 自带 curl；同步 apt 装包已移除——超时陷阱）
+            ai.devcodex.agent.shell.TermuxRuntime.exec(ctx, command, timeoutSec = timeoutSec.toLong())
         }.getOrElse { localExec(command) }
     }
 
@@ -259,11 +257,25 @@ object ShellAccess {
     }
 
     suspend fun readFile(path: String): String {
+        // app uid 可读（应用私有目录/工作区）→ Java 直读；Shizuku(shell uid) 读 app 私有目录必被系统拒
+        // （装机实测 fs_write 成功、fs_read 全 Permission denied 的通道分裂根因）
+        val f = File(path)
+        if (f.isFile && f.canRead()) return runCatching { f.readText() }.getOrElse { "ERROR: ${it.message}" }
         shizukuAwait()?.let { svc -> return runCatching { svc.read(path) }.getOrElse { "ERROR: ${it.message}" } }
         return runCatching { File(path).readText() }.getOrElse { rootExec("cat \"$path\"") }
     }
 
     suspend fun writeFile(path: String, data: String): String {
+        // app uid 可写（私有目录/工作区）→ Java 直写；Shizuku 写 app 私有目录必失败且失败不回退
+        val target = File(path)
+        val parent = target.parentFile
+        if ((parent != null && parent.isDirectory && parent.canWrite()) || (target.isFile && target.canWrite())) {
+            return runCatching {
+                parent?.mkdirs()
+                target.writeText(data)
+                "OK"
+            }.getOrElse { "ERROR: ${it.message}" }
+        }
         shizukuAwait()?.let { svc -> return runCatching { svc.write(path, data); "OK" }.getOrElse { "ERROR: ${it.message}" } }
         val ok = runCatching {
             File(path).parentFile?.mkdirs()
@@ -274,14 +286,21 @@ object ShellAccess {
     }
 
     suspend fun listDir(path: String): String {
-        shizukuAwait()?.let { svc -> return runCatching { svc.list(path) }.getOrElse { "ERROR: ${it.message}" } }
         val f = File(path)
+        if (f.isDirectory && f.canRead()) return f.list()?.joinToString("\n") ?: "(empty)"
+        shizukuAwait()?.let { svc -> return runCatching { svc.list(path) }.getOrElse { "ERROR: ${it.message}" } }
         return if (f.isDirectory) (f.list()?.joinToString("\n") ?: "(empty)")
         else rootExec("ls -la \"$path\"")
     }
 
     suspend fun delete(path: String): String {
+        val f = File(path)
+        if (!f.exists()) return "OK（不存在）"
+        val parent = f.parentFile
+        if (parent?.canWrite() == true || f.canWrite()) {
+            return if (f.deleteRecursively()) "OK" else "ERROR: 删除失败（$path）"
+        }
         shizukuAwait()?.let { svc -> return runCatching { if (svc.delete(path)) "OK" else "ERROR: 删除失败" }.getOrElse { "ERROR: ${it.message}" } }
-        return if (File(path).deleteRecursively()) "OK" else rootExec("rm -rf \"$path\"").ifBlank { "OK" }
+        return if (f.deleteRecursively()) "OK" else rootExec("rm -rf \"$path\"").ifBlank { "OK" }
     }
 }

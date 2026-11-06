@@ -18,6 +18,14 @@ object AdvancedFsTools {
         if (path.startsWith("/")) path
         else java.io.File(ai.devcodex.agent.tools.BuiltinTools.workspaceRoot(), path.removePrefix("./")).canonicalPath
 
+    /** 文件工具执行通道：命令涉及 app 可读写路径（工作区/应用目录）→ localExec（app uid，工作区 cwd，不绕 Shizuku——shell uid 进不了 app 私有目录）；纯系统路径 → Shizuku ADB */
+    private suspend fun fsExec(command: String): String {
+        val wsRoot = ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().canonicalPath
+        val filesRoot = ai.devcodex.agent.tools.BuiltinTools.appContext().filesDir.canonicalPath
+        return if (wsRoot in command || filesRoot in command) ai.devcodex.agent.shell.ShellAccess.localExec(command, 30)
+        else ShellAccess.exec(command)
+    }
+
     val fsCopy = ToolDef(
         name = "fs_copy",
         description = "复制文件或目录（递归）。相对路径=工作区",
@@ -31,7 +39,7 @@ object AdvancedFsTools {
     ) { args ->
         val src = JsonArg.string(args, "src") ?: return@ToolDef "ERROR: 缺少 src"
         val dst = JsonArg.string(args, "dst") ?: return@ToolDef "ERROR: 缺少 dst"
-        ShellAccess.exec("cp -r \"${resolve(src)}\" \"${resolve(dst)}\"").ifBlank { "OK" }
+        fsExec("cp -r \"${resolve(src)}\" \"${resolve(dst)}\"").ifBlank { "OK" }
     }
 
     val fsMove = ToolDef(
@@ -47,7 +55,7 @@ object AdvancedFsTools {
     ) { args ->
         val src = JsonArg.string(args, "src") ?: return@ToolDef "ERROR: 缺少 src"
         val dst = JsonArg.string(args, "dst") ?: return@ToolDef "ERROR: 缺少 dst"
-        ShellAccess.exec("mv \"${resolve(src)}\" \"${resolve(dst)}\"").ifBlank { "OK" }
+        fsExec("mv \"${resolve(src)}\" \"${resolve(dst)}\"").ifBlank { "OK" }
     }
 
     val fsMkdir = ToolDef(
@@ -59,7 +67,7 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        ShellAccess.exec("mkdir -p \"${resolve(path)}\"").ifBlank { "OK" }
+        fsExec("mkdir -p \"${resolve(path)}\"").ifBlank { "OK" }
     }
 
     val fsRename = ToolDef(
@@ -74,7 +82,7 @@ object AdvancedFsTools {
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
         val name = JsonArg.string(args, "newName") ?: return@ToolDef "ERROR: 缺少 newName"
         val dir = java.io.File(resolve(path)).parentFile?.absolutePath ?: "/sdcard"
-        ShellAccess.exec("mv \"${resolve(path)}\" \"$dir/$name\"").ifBlank { "OK" }
+        fsExec("mv \"${resolve(path)}\" \"$dir/$name\"").ifBlank { "OK" }
     }
 
     val fsGrep = ToolDef(
@@ -91,7 +99,7 @@ object AdvancedFsTools {
     ) { args ->
         val pattern = JsonArg.string(args, "pattern") ?: return@ToolDef "ERROR: 缺少 pattern"
         val path = JsonArg.string(args, "path")?.let { resolve(it) } ?: resolve("")
-        ShellAccess.exec("grep -rn --include='*' -e \"$pattern\" \"$path\" 2>/dev/null | head -100").ifBlank { "(无匹配)" }
+        fsExec("grep -rn --include='*' -e \"$pattern\" \"$path\" 2>/dev/null | head -100").ifBlank { "(无匹配)" }
     }
 
     val fsFind = ToolDef(
@@ -108,7 +116,7 @@ object AdvancedFsTools {
     ) { args ->
         val name = JsonArg.string(args, "name") ?: return@ToolDef "ERROR: 缺少 name"
         val path = JsonArg.string(args, "path")?.let { resolve(it) } ?: resolve("")
-        ShellAccess.exec("find \"$path\" -name \"$name\" 2>/dev/null | head -80").ifBlank { "(无匹配)" }
+        fsExec("find \"$path\" -name \"$name\" 2>/dev/null | head -80").ifBlank { "(无匹配)" }
     }
 
     val fsChmod = ToolDef(
@@ -125,7 +133,7 @@ object AdvancedFsTools {
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
         val mode = JsonArg.string(args, "mode") ?: "644"
-        ShellAccess.exec("chmod $mode \"${resolve(path)}\"").ifBlank { "OK" }
+        fsExec("chmod $mode \"${resolve(path)}\"").ifBlank { "OK" }
     }
 
     val fsTail = ToolDef(
@@ -141,7 +149,7 @@ object AdvancedFsTools {
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
         val n = JsonArg.int(args, "lines") ?: 50
-        ShellAccess.exec("tail -n $n \"${resolve(path)}\"").take(12000)
+        fsExec("tail -n $n \"${resolve(path)}\"").take(12000)
     }
 
     val fsHead = ToolDef(
@@ -157,7 +165,7 @@ object AdvancedFsTools {
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
         val n = JsonArg.int(args, "lines") ?: 50
-        ShellAccess.exec("head -n $n \"${resolve(path)}\"").take(12000)
+        fsExec("head -n $n \"${resolve(path)}\"").take(12000)
     }
 
     val fsStat = ToolDef(
@@ -169,7 +177,7 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        ShellAccess.exec("ls -la \"${resolve(path)}\" 2>/dev/null || stat \"${resolve(path)}\"")
+        fsExec("ls -la \"${resolve(path)}\" 2>/dev/null || stat \"${resolve(path)}\"")
     }
 
     val fsWc = ToolDef(
@@ -181,7 +189,7 @@ object AdvancedFsTools {
         },
     ) { args ->
         val path = JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
-        ShellAccess.exec("wc \"${resolve(path)}\"")
+        fsExec("wc \"${resolve(path)}\"")
     }
 
     val all = listOf(fsCopy, fsMove, fsMkdir, fsRename, fsGrep, fsFind, fsChmod, fsTail, fsHead, fsStat, fsWc)

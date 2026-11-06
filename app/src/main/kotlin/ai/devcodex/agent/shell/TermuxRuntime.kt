@@ -258,7 +258,10 @@ object TermuxRuntime {
                 .apply {
                     val env = environment()
                     env["PATH"] = File(usr, "bin").absolutePath + ":/system/bin:/system/xbin"
-                    env["LD_LIBRARY_PATH"] = File(usr, "lib").absolutePath
+                    // PREFIX：Termux 程序（pkg/apt/proot 等）定位自身前缀的惯例变量（装机实测模型被迫手工 export 的根因）
+                    env["PREFIX"] = usr.absolutePath
+                    // proot-bin 前置：直接运行 proot 二进制无需手工补库
+                    env["LD_LIBRARY_PATH"] = File(context.filesDir, "proot-bin").absolutePath + ":" + File(usr, "lib").absolutePath
                     env["HOME"] = File(usr, "home").absolutePath
                     File(usr, "home").mkdirs()
                     env["TMPDIR"] = File(usr, "tmp").absolutePath

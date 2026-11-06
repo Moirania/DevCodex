@@ -114,6 +114,8 @@ data class AppSettings(
     val permissionsMigrated: Boolean = false,
     // 媒体工具迁移：旧用户已持久化的 enabledTools 不含 image_generate / video_generate / video_status
     val mediaToolsMigrated: Boolean = false,
+    // 导航沉浸默认迁移（v0.3.4）：老用户 bottom 一次性切 immersive，之后手动改回的选择保留
+    val navImmersiveMigrated: Boolean = false,
     val maxAgentSteps: Int = 24,
     val autoCompact: Boolean = true,      // 自动压缩上下文（超阈值摘要旧对话）
     // MCP 服务器（Streamable HTTP / SSE）
@@ -164,7 +166,7 @@ data class ThemePrefsData(
     val approvalMode: String = "ASSISTED",   // 工具审批模式：FULL(全自动) / ASSISTED(高危审) / REQUEST(每步审)
     val appFont: String = "anthropic",   // Anthropic Serif（英文），中文回退系统
     val chatFont: String = "anthropic",
-    val navPosition: String = "bottom",    // bottom | rail（左侧）
+    val navPosition: String = "immersive",    // immersive（沉浸，默认）| bottom | rail（左侧）
     val immersive: Boolean = false,        // 沉浸模式：隐藏导航栏（聊天页全屏）
     val userNick: String = "我",
     val aiNick: String = "DevCodex",

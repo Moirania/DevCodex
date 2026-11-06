@@ -17,6 +17,8 @@ object PRootUbuntu {
     /** 首次解压 proot 二进制 + rootfs（~80MB 解压后），进度回调 0..100 */
     fun ensure(ctx: Context, onProgress: (Int) -> Unit = {}): Boolean {
         if (initialized && rootfsDir(ctx).resolve("bin").exists()) return true
+        // 失败缓存（进程级）：初始化/解压失败后不再重试——否则每次调用都重解 80MB rootfs
+        ensureFatal?.let { return false }
         return runCatching {
             val prootDir = File(ctx.filesDir, "proot-bin").apply { mkdirs() }
             // proot 二进制 + 依赖库（talloc/shmem/termux-exec + rootfs loader，全部自带，不依赖 Termux）
@@ -61,12 +63,16 @@ object PRootUbuntu {
             initialized = true
             onProgress(100)
             root.resolve("bin").exists()
-        }.getOrDefault(false)
+        }.onFailure { ensureFatal = "初始化失败: ${it.message}" }.getOrDefault(false)
     }
 
     /** proot 可用性缓存：null=未测，true=可用，false=设备 ROM seccomp 禁 ptrace 等 */
     @Volatile
     private var prootBroken: Boolean? = null
+
+    /** ensure 失败原因缓存（进程级）：失败后不再重试，避免每次调用重复解压 80MB rootfs */
+    @Volatile
+    private var ensureFatal: String? = null
 
     /** 探测 proot 真实可用性：需 rootfs 就绪后跑 /bin/true（--version 不触发 ptrace，测不出 seccomp） */
     private fun probeProot(ctx: Context, proot: String, root: File): Boolean {

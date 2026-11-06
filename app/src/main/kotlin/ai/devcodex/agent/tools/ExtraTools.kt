@@ -10,6 +10,9 @@ import ai.devcodex.agent.util.JsonArg
 import ai.devcodex.agent.shell.ShellAccess
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.put
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.io.File
@@ -531,7 +534,32 @@ object ExtraTools {
         risk = ToolDef.Risk.MEDIUM,
     ) { args ->
         val pkgs = JsonArg.string(args, "packages") ?: return@ToolDef "ERROR: 缺少 packages"
-        ShellAccess.execSandbox("(command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y $pkgs || pkg install -y $pkgs) 2>&1 | tail -20").take(8000)
+        ShellAccess.execSandbox("(command -v apt-get >/dev/null 2>&1 && (DEBIAN_FRONTEND=noninteractive apt-get update 2>&1 | tail -1; DEBIAN_FRONTEND=noninteractive apt-get install -y $pkgs) || pkg install -y $pkgs) 2>&1 | tail -20", timeoutSec = 600).take(8000)
+    }
+
+    /** 沙盒软件后台安装状态（进程级）：bin → 是否安装中 */
+    private val sandboxInstalling = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    /**
+     * 沙盒软件后台安装：返回 null=已就绪无需等待，非 null=给模型的提示。
+     * 同步装包是步数烧穿陷阱（30s 级超时→强杀→模型重试→再超时）：安装转后台协程，模型收提示后等待重试。
+     */
+    private fun sandboxInstall(bin: String, installCmd: String): String? {
+        if (sandboxInstalling[bin] == true) {
+            return "$bin 正在后台安装（首次约 1-3 分钟）。请稍后重新运行刚才的工具（不要重复触发安装），期间可以先做其他事"
+        }
+        sandboxInstalling[bin] = true
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val c = ctx()
+                val r = runCatching {
+                    if (ai.devcodex.agent.shell.PRootUbuntu.ensure(c)) ai.devcodex.agent.shell.PRootUbuntu.exec(c, installCmd, 600)
+                    else ai.devcodex.agent.shell.TermuxRuntime.exec(c, installCmd, 600)
+                }.getOrDefault("ERROR: 安装协程异常")
+                ai.devcodex.agent.util.DebugLog.i("SandboxInstall", "$bin => ${r.take(300)}")
+            } finally { sandboxInstalling[bin] = false }
+        }
+        return "$bin 首次安装已转后台（约 1-3 分钟，官方源）。请稍等 1-3 分钟后重新运行刚才的工具；若多次仍提示未安装，向用户说明并请其检查网络后重试"
     }
 
     val pythonRun = ToolDef(
@@ -552,7 +580,8 @@ object ExtraTools {
         script.writeText(code)
         val hasPy = ShellAccess.execSandbox("command -v python3")
         if (!hasPy.contains("python3")) {
-            ShellAccess.execSandbox("(command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 || pkg install -y python) 2>&1 | tail -3")
+            val state = sandboxInstall("python3", "DEBIAN_FRONTEND=noninteractive apt-get update 2>&1 | tail -1 && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 2>&1 | tail -2 || pkg install -y python 2>&1 | tail -2")
+            if (state != null) return@ToolDef state
         }
         ShellAccess.execSandbox("python3 ${script.absolutePath} 2>&1").take(20000)
     }
@@ -574,7 +603,8 @@ object ExtraTools {
         script.writeText(code)
         val hasNode = ShellAccess.execSandbox("command -v node")
         if (!hasNode.contains("node")) {
-            ShellAccess.execSandbox("(command -v apt-get >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs || pkg install -y nodejs) 2>&1 | tail -3")
+            val state = sandboxInstall("nodejs", "DEBIAN_FRONTEND=noninteractive apt-get update 2>&1 | tail -1 && DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs 2>&1 | tail -2 || pkg install -y nodejs 2>&1 | tail -2")
+            if (state != null) return@ToolDef state
         }
         ShellAccess.execSandbox("node ${script.absolutePath} 2>&1").take(20000)
     }
