@@ -410,8 +410,12 @@ fun InputBar(
                     Spacer(Modifier.width(6.dp))
                     Box(Modifier.weight(1f).height(5.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
                         Row(Modifier.fillMaxSize()) {
+                            // 上下文段（primary）：weight 下限 1，杜绝 weight(0f)/NaN 崩溃（装机实测 11-07 一加 Android 16 两次闪退根因）
                             Box(Modifier.weight((ctxUsedPct - outPct).coerceAtLeast(1).toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
-                            Box(Modifier.weight(outPct.coerceAtLeast(0).toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.tertiary))
+                            // 输出段（tertiary）：仅在 >0 时渲染——流式中 outputTokens 未上报时 outPct=0，weight(0f) 直接 IllegalArgumentException
+                            if (outPct > 0) {
+                                Box(Modifier.weight(outPct.coerceAtLeast(1).toFloat()).fillMaxHeight().background(MaterialTheme.colorScheme.tertiary))
+                            }
                         }
                     }
                     Spacer(Modifier.width(6.dp))

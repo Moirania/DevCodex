@@ -236,8 +236,11 @@ object TermuxRuntime {
         p.contains("ok")
     }.getOrDefault(false)
 
-    /** 执行（busybox ash 为主 shell） */
-    fun exec(context: Context, command: String, timeoutSec: Long = 30, cwd: String? = null): String {
+    /** bash 通道在本机不可用（ROM 禁 exec 应用数据目录二进制）：进程级缓存，避免每次调用重复撞墙 */
+    @Volatile private var bashBlockedByRom = false
+
+    /** 执行（busybox ash 为主 shell）；forceBusybox=true 跳过 bash 通道（失败自动回退时用） */
+    fun exec(context: Context, command: String, timeoutSec: Long = 30, cwd: String? = null, forceBusybox: Boolean = false): String {
         if (!ensure(context)) return "ERROR(termux): 引擎未就绪（$lastError）"
         val usr = prefix(context)
         val loader = File(muslDir(context), "ld-musl-aarch64.so.1").absolutePath
@@ -248,10 +251,10 @@ object TermuxRuntime {
         return try {
             // bash 优先（bionic：系统 linker + env；Operit 同款方式）
             val bash = File(usr, "bin/bash")
-            val p = if (bash.exists() && File(usr, "lib/libreadline.so.8").exists()) {
+            val p = if (!forceBusybox && !bashBlockedByRom && bash.exists() && File(usr, "lib/libreadline.so.8").exists()) {
                 ProcessBuilder(bash.absolutePath, "-c", wrapped)
             } else {
-                ai.devcodex.agent.util.DebugLog.w("Termux", "bash skipped (exists=${bash.exists()}, readline=${File(usr, "lib/libreadline.so.8").exists()}), fallback to busybox sh")
+                if (!forceBusybox) ai.devcodex.agent.util.DebugLog.w("Termux", "bash skipped (exists=${bash.exists()}, readline=${File(usr, "lib/libreadline.so.8").exists()}), fallback to busybox sh")
                 ProcessBuilder(loader, bb, "sh", "-c", wrapped)
             }
                 .redirectErrorStream(true)
@@ -292,7 +295,15 @@ object TermuxRuntime {
             val code = p.exitValue()
             t.join(500)
             // 空输出不重跑命令（重复副作用），带 exit code 让模型明确命令已完成
-            synchronized(out) { out.toString() }.ifBlank { "(exit=$code，无标准输出)" }
+            val raw = synchronized(out) { out.toString() }.ifBlank { "(exit=$code，无标准输出)" }
+            // Android 10+ 部分 ROM（ColorOS 16 实测）禁止 exec 应用数据目录二进制：bash 本体被 toybox 兜底解释为脚本，
+            // 输出 "…/bash[1]: ELF…: inaccessible or not found"。缓存死因并改走 busybox（musl loader）通道重试一次
+            if (!forceBusybox && raw.contains("inaccessible or not found") && raw.contains(bash.absolutePath)) {
+                bashBlockedByRom = true
+                ai.devcodex.agent.util.DebugLog.w("Termux", "bash blocked by ROM (exec of app-data binary denied) — caching and retrying via busybox loader")
+                return exec(context, command, timeoutSec, cwd, forceBusybox = true)
+            }
+            raw
         } catch (e: Exception) { "ERROR(termux): ${e.message}" }
     }
 }
