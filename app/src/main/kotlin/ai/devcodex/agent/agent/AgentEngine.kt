@@ -186,11 +186,20 @@ class AgentEngine(
         val effort = if (session.deepThink) "high" else s.reasoningEffort
 
         var current = session
+        var lastToolSig = ""
+        var loopStreak = 0
+        val t0 = System.currentTimeMillis()
         try {
             var steps = 0
             // maxAgentSteps <= 0 表示不限步数
             while (s.maxAgentSteps <= 0 || steps < s.maxAgentSteps) {
                 steps++
+                // 软熔断①：墙钟超时——不限步模式下防无限跑
+                if (steps > 1 && System.currentTimeMillis() - t0 > s.agentWallClockMin * 60_000L) {
+                    events.emit(UiEvent.Error("任务已运行 ${s.agentWallClockMin} 分钟（墙钟上限），已停止。可在设置中调整"))
+                    events.emit(UiEvent.Finished(current.id))
+                    return
+                }
 
                 // ---- 1. 流式调 LLM ----
                 var turns = buildList {
@@ -306,6 +315,18 @@ class AgentEngine(
 
                 val toolCalls = toolAgg.values.filter { it.second.isNotBlank() }.map {
                     ToolCall(id = it.first, name = it.second, argsJson = it.third.toString().ifBlank { "{}" })
+                }
+
+                // 软熔断②：连续相同工具调用检测——同一签名（工具+参数）连续 6 轮说明模型陷入死循环
+                val sig = toolCalls.joinToString("|") { it.name + ":" + it.argsJson }
+                loopStreak = if (sig == lastToolSig && sig.isNotBlank()) loopStreak + 1 else 0
+                lastToolSig = sig
+                if (loopStreak >= 5) {
+                    events.emit(UiEvent.Error("连续 ${loopStreak + 1} 轮执行完全相同的工具调用（疑似死循环），已自动停止。可换种思路或调整任务描述"))
+                    current = current.patch(assistantId) { it.copy(content = text.toString().ifBlank { "(死循环熔断)" }) }
+                    onUpdate(current)
+                    events.emit(UiEvent.Finished(current.id))
+                    return
                 }
 
                 if (toolCalls.isEmpty()) {

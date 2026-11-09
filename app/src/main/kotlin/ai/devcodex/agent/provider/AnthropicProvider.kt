@@ -1,6 +1,7 @@
 package ai.devcodex.agent.provider
 
 import ai.devcodex.agent.data.ModelTestResult
+import ai.devcodex.agent.provider.ModelRegistry
 import ai.devcodex.agent.data.ProviderConfig
 import ai.devcodex.agent.util.describe
 import kotlinx.serialization.json.*
@@ -84,7 +85,10 @@ object AnthropicProvider {
     fun chatRequest(p: ProviderConfig, model: String, systemPrompt: String, turns: List<ChatTurn>, tools: List<JsonObject>, stream: Boolean, reasoningEffort: String = ""): Request {
         val body = buildJsonObject {
             put("model", model)
-            put("max_tokens", if (reasoningEffort.isNotBlank()) thinkingBudget(reasoningEffort) + 8192 else 8192)
+            // max_tokens：用户能力覆盖（maxOutput）优先；推理模式按 thinking 预算 + 8192（预算必须小于 max_tokens）
+            val userMax = ModelRegistry.lookup(model).maxOutput
+            put("max_tokens", userMax?.coerceAtLeast(1024)
+                ?: if (reasoningEffort.isNotBlank()) thinkingBudget(reasoningEffort) + 8192 else 8192)
             put("stream", stream)
             if (systemPrompt.isNotBlank()) put("system", systemPrompt)
             if (reasoningEffort.isNotBlank()) {

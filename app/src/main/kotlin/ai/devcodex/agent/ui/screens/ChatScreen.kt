@@ -1007,14 +1007,47 @@ fun ChatScreen(vm: AppViewModel) {
 private fun EmptyHint(onExample: (String) -> Unit) {
     Column(
         Modifier.fillMaxWidth().padding(top = 56.dp, start = 24.dp, end = 24.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
     ) {
-        Text("有什么可以帮你的？", style = MaterialTheme.typography.headlineSmall)
-        Spacer(Modifier.height(6.dp))
+        // Claude 式橙色星芒（12 根放射线自绘）
+        androidx.compose.foundation.Canvas(Modifier.size(44.dp)) {
+            val cx = size.width / 2; val cy = size.height / 2
+            val rOuter = size.minDimension / 2f; val rInner = rOuter * 0.28f
+            val rot = java.lang.System.currentTimeMillis() / 4000f
+            for (i in 0 until 12) {
+                val a = rot + i * (Math.PI * 2 / 12).toFloat()
+                androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * rInner, cy + kotlin.math.sin(a) * rInner).let { s0 ->
+                    androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * rOuter, cy + kotlin.math.sin(a) * rOuter).let { s1 ->
+                        drawLine(androidx.compose.ui.graphics.Color(0xFFD97757), s0, s1, strokeWidth = 2.2f)
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        // 衬线大字问候（按时段/星期）
+        Text(
+            remember {
+                val cal = java.util.Calendar.getInstance()
+                val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+                val weekGreet = listOf("周日好", "周一快乐", "周二加油", "周三过半了", "周四坚持", "周五愉快", "周六轻松")[cal.get(java.util.Calendar.DAY_OF_WEEK) - 1]
+                when {
+                    hour < 5 -> "夜深了"
+                    hour < 9 -> "早上好"
+                    hour < 12 -> "上午好"
+                    hour < 14 -> "中午好"
+                    hour < 18 -> "下午好"
+                    hour < 23 -> "晚上好"
+                    else -> "夜深了"
+                } + "，" + weekGreet
+            },
+            style = MaterialTheme.typography.headlineMedium,
+        )
+        Spacer(Modifier.height(8.dp))
         Text(
             "DevCodex v${ai.devcodex.agent.BuildConfig.VERSION_NAME} · Android AI Agent",
             style = MaterialTheme.typography.labelMedium,
             fontFamily = Mono,
-            color = MaterialTheme.colorScheme.primary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Spacer(Modifier.height(20.dp))
         Text("试试这些指令：", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1051,10 +1084,8 @@ private fun typeName(n: String): String = when (n) {
 
 @Composable
 private fun TypingDots() {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)))
-        Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.55f), RoundedCornerShape(4.dp)))
-        Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), RoundedCornerShape(4.dp)))
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        ai.devcodex.agent.ui.components.ClaudeSpark(sparkSize = 18.dp, animate = true)
         Text("思考中…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

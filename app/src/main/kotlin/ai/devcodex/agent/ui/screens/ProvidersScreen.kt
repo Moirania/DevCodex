@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Surface
@@ -73,6 +74,7 @@ fun ProvidersScreen(vm: AppViewModel) {
     val settings by vm.settings.collectAsState(initial = ai.devcodex.agent.data.AppSettings())
     var editing by remember { mutableStateOf<ProviderConfig?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var capsEditing by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
 
@@ -207,6 +209,7 @@ fun ProvidersScreen(vm: AppViewModel) {
                 ),
                 onDismiss = { creating = false },
                 onSave = { vm.upsertProvider(it); creating = false },
+                onEditCaps = { capsEditing = it },
             )
         }
     }
@@ -215,7 +218,11 @@ fun ProvidersScreen(vm: AppViewModel) {
             initial = p,
             onDismiss = { editing = null },
             onSave = { vm.upsertProvider(it); editing = null },
+            onEditCaps = { capsEditing = it },
         )
+    }
+    capsEditing?.let { m ->
+        ModelCapsDialog(model = m, vm = vm, onDismiss = { capsEditing = null })
     }
 }
 
@@ -224,6 +231,7 @@ private fun ProviderEditDialog(
     initial: ProviderConfig,
     onDismiss: () -> Unit,
     onSave: (ProviderConfig) -> Unit,
+    onEditCaps: (String) -> Unit = {},
 ) {
     var name by remember { mutableStateOf(initial.name) }
     var type by remember { mutableStateOf(initial.type) }
@@ -452,6 +460,14 @@ private fun ProviderEditDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
+                                TextButton(
+                                    onClick = { onEditCaps(m) },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                ) {
+                                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Filled.Settings, "能力设置", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("能力", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                }
                             }
                             IconButton(onClick = {
                                 testing = m
@@ -551,3 +567,76 @@ private fun normalizeBaseUrl(raw: String): String {
 private fun hostOf(url: String): String = runCatching {
     java.net.URI(url).host?.removePrefix("www.")?.replaceFirstChar { it.uppercase() } ?: url
 }.getOrDefault(url.ifBlank { "提供商" })
+
+// ============ 模型能力编辑（自动识别之上的手动覆盖） ============
+@Composable
+private fun ModelCapsDialog(
+    model: String,
+    vm: AppViewModel,
+    onDismiss: () -> Unit,
+) {
+    val t by vm.settings.collectAsState(initial = ai.devcodex.agent.data.AppSettings())
+    val cur = t.modelCaps[model]
+    var toolsSel by remember { mutableStateOf(cur?.tools) }
+    var visionSel by remember { mutableStateOf(cur?.vision) }
+    var ctxText by remember { mutableStateOf(cur?.contextLength?.toString() ?: "") }
+    var outText by remember { mutableStateOf(cur?.maxOutput?.toString() ?: "") }
+    val auto = ai.devcodex.agent.provider.ModelRegistry.let { reg ->
+        // 临时清掉 override 看自动识别的值（仅展示用，不落盘）
+        val saved = t.modelCaps.toMutableMap()
+        runCatching { reg.setOverrides(emptyMap()) }
+        val m = reg.lookup(model)
+        runCatching { reg.setOverrides(saved) }
+        m
+    }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("模型能力 · $model", style = MaterialTheme.typography.titleMedium, maxLines = 2) },
+        text = {
+            Column {
+                Text("留空/自动 = 跟随内置识别（工具${if (auto.tools == true) "✓" else if (auto.tools == false) "✗" else "?"} · 视觉${if (auto.vision) "✓" else "✗"} · ${auto.contextLength?.let { "${it / 1000}k 上下文" } ?: "上下文未知"}）",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(10.dp))
+                Text("工具调用", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(null to "自动", true to "开", false to "关").forEach { (v, l) ->
+                        androidx.compose.material3.FilterChip(selected = toolsSel == v, onClick = { toolsSel = v }, label = { Text(l) })
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("图片输入", style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(null to "自动", true to "开", false to "关").forEach { (v, l) ->
+                        androidx.compose.material3.FilterChip(selected = visionSel == v, onClick = { visionSel = v }, label = { Text(l) })
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = ctxText, onValueChange = { ctxText = it.filter { c -> c.isDigit() }.take(8) },
+                    label = { Text("上下文窗口（tokens）") }, modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = outText, onValueChange = { outText = it.filter { c -> c.isDigit() }.take(7) },
+                    label = { Text("最大输出（tokens）") }, modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                val o = ai.devcodex.agent.provider.ModelRegistry.ModelCapsOverride(
+                    tools = toolsSel, vision = visionSel,
+                    contextLength = ctxText.toIntOrNull()?.takeIf { it > 0 },
+                    maxOutput = outText.toIntOrNull()?.takeIf { it > 0 },
+                )
+                vm.saveSettings { s2 ->
+                    val caps = s2.modelCaps.toMutableMap()
+                    if (o.tools == null && o.vision == null && o.contextLength == null && o.maxOutput == null) caps.remove(model) else caps[model] = o
+                    s2.copy(modelCaps = caps)
+                }
+                onDismiss()
+            }) { Text("保存") }
+        },
+        dismissButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}

@@ -57,6 +57,15 @@ object TermuxRuntime {
                 return false
             }
             // ---- 2. bootstrap 完整环境（可失败，不阻塞 busybox） ----
+            // 版本化 marker：bootstrap-1 时代的 repairBootstrap 有 ELF 误写 bug（188 个二进制被 UTF-8 round-trip 损坏，
+            // bash 报 "ELF: inaccessible or not found"），版本不匹配时清空重解压自愈
+            val staleBootstrap = marker.exists() && marker.readText().trim() != "bootstrap-2"
+            if (staleBootstrap) {
+                ai.devcodex.agent.util.DebugLog.w("Termux", "bootstrap v1 detected (corrupted ELF by old repairBootstrap) — wiping and re-extracting")
+                usr.deleteRecursively()
+                marker.delete()
+                File(usr.parentFile, ".bootstrap-fixed").delete()
+            }
             if (!marker.exists() && !bash(context).isFile) {
                 try {
                     val tmp = File(context.cacheDir, "bootstrap.zip")
@@ -81,9 +90,21 @@ object TermuxRuntime {
                     // bin 全可执行 + bin/sh 指向 busybox（稳妥 shell）
                     File(usr, "bin").listFiles()?.forEach { if (it.isFile) it.setExecutable(true, false) }
                     tmp.delete()
-                    marker.writeText("bootstrap-1")
+                    marker.writeText("bootstrap-2")
                 } catch (e: Exception) {
-                    // bash 工具链失败不致命（busybox 已可用）
+                    // bash 工具链失败不致命（busybox 已可用）；但若刚做过 staleBootstrap 清空，需兜底恢复 busybox 三件套
+                    runCatching {
+                        val bb = busybox(context)
+                        if (!bb.isFile) context.assets.open("busybox").use { i -> bb.outputStream().use { o -> i.copyTo(o) } }
+                        bb.setExecutable(true, false)
+                        val mDir = muslDir(context)
+                        mDir.mkdirs()
+                        for (n in listOf("ld-musl-aarch64.so.1", "libc.musl-aarch64.so.1")) {
+                            val f = File(mDir, n)
+                            if (!f.isFile) context.assets.open("busybox_lib/$n").use { i -> f.outputStream().use { o -> i.copyTo(o) } }
+                            f.setExecutable(true, false)
+                        }
+                    }
                     if (bash(context).isFile) bash(context).setExecutable(true, false)
                 }
             }
@@ -110,7 +131,7 @@ object TermuxRuntime {
      * - 断链修复 bzcmp/bzless/zipinfo
      */
     private fun repairBootstrap(context: Context, usr: File) {
-        val fixedMark = File(usr.parentFile, ".bootstrap-fixed")
+        val fixedMark = File(usr.parentFile, ".bootstrap-fixed-2")
         val oldPrefix = "/data/data/com.termux/files/usr"
         val p = usr.absolutePath
         var fixedScripts = 0
@@ -124,11 +145,13 @@ object TermuxRuntime {
                     if (!f.isFile || f.length() > 2_000_000) return@forEach
                     if (java.nio.file.Files.isSymbolicLink(f.toPath())) return@forEach
                     runCatching {
+                        // ELF 二进制绝不 readText/writeText：UTF-8 round-trip 会把非法字节替换成 U+FFFD，字节级损坏
                         val head = ByteArray(4)
-                        f.inputStream().use { ins ->
+                        val isElf = f.inputStream().use { ins ->
                             val n = ins.read(head)
-                            if (n >= 4 && head[0] == 0x7f.toByte() && head[1] == 'E'.code.toByte()) return@use
+                            n >= 4 && head[0] == 0x7f.toByte() && head[1] == 'E'.code.toByte() && head[2] == 'L'.code.toByte() && head[3] == 'F'.code.toByte()
                         }
+                        if (isElf) return@runCatching
                         val text = f.readText()
                         if (text.contains(oldPrefix)) {
                             f.writeText(text.replace(oldPrefix, p))

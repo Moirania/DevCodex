@@ -88,7 +88,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         runCatching { ai.devcodex.agent.data.CharacterRepo.init(getApplication()) }
         viewModelScope.launch {
-            settings.collect { latestSettings = it }
+            settings.collect {
+                latestSettings = it
+                // 模型能力手动覆盖灌入注册表（ModelRegistry.lookup 全局生效）
+                runCatching { ai.devcodex.agent.provider.ModelRegistry.setOverrides(it.modelCaps) }
+            }
         }
         // 旧审批模式与 toolPerms 一次性迁移到新权限字段（须先于设置读取生效）
         viewModelScope.launch {

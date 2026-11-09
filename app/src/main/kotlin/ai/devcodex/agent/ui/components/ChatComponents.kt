@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -140,10 +141,8 @@ fun AssistantMessage(msg: Message, showAvatar: Boolean = true) {
         Column(Modifier.weight(1f)) {
             if (!msg.thinking.isNullOrBlank()) ThinkingBlock(msg.thinking!!)
             if (msg.content.isBlank() && msg.toolCalls.isEmpty() && msg.thinking.isNullOrBlank()) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
-                    Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.55f), CircleShape))
-                    Box(Modifier.size(7.dp).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f), CircleShape))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ClaudeSpark(sparkSize = 18.dp, animate = true)
                     Text("思考中…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else if (msg.content.isNotBlank()) {
@@ -158,6 +157,42 @@ fun AssistantMessage(msg: Message, showAvatar: Boolean = true) {
 }
 
 // ============ 思考块（rikkahub 式细边框折叠） ============
+/** Claude 风格星芒：12 根陶土橙放射线逐根伸缩（思考中动画 / 静态星标两用，自绘无外部素材） */
+@Composable
+fun ClaudeSpark(modifier: Modifier = Modifier, sparkSize: androidx.compose.ui.unit.Dp = 20.dp, animate: Boolean = true) {
+    val progress = if (animate) {
+        androidx.compose.animation.core.rememberInfiniteTransition(label = "spark")
+            .animateFloat(
+                initialValue = 0f, targetValue = 1f,
+                animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                    animation = androidx.compose.animation.core.tween(2400, easing = androidx.compose.animation.core.LinearEasing),
+                    repeatMode = androidx.compose.animation.core.RepeatMode.Restart,
+                ),
+                label = "sparkPhase",
+            ).value
+    } else 0f
+    androidx.compose.foundation.Canvas(modifier.size(sparkSize)) {
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val rOuter = size.minDimension / 2f
+        val rInner = rOuter * 0.22f
+        val twoPi = (2.0 * Math.PI).toFloat()
+        for (i in 0 until 12) {
+            val phase = (progress + i / 12f) % 1f
+            val pulse = 0.5f + 0.5f * kotlin.math.sin(phase * twoPi)
+            val r = rInner + (rOuter - rInner) * (0.55f + 0.45f * pulse)
+            val a = i * (twoPi / 12f)
+            drawLine(
+                color = androidx.compose.ui.graphics.Color(0xFFD97757).copy(alpha = 0.35f + 0.65f * pulse),
+                start = androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * rInner, cy + kotlin.math.sin(a) * rInner),
+                end = androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * r, cy + kotlin.math.sin(a) * r),
+                strokeWidth = 2f,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
+            )
+        }
+    }
+}
+
 @Composable
 fun ThinkingBlock(text: String) {
     var expanded by remember { mutableStateOf(false) }
@@ -392,7 +427,7 @@ fun InputBar(
     val optionsExpanded = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     // rikkahub 视觉：顶部大圆角浮层容器
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
         shape = MaterialTheme.shapes.extraLarge,
         tonalElevation = 0.dp,
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
@@ -513,15 +548,21 @@ fun InputBar(
                     value = value,
                     onValueChange = onValueChange,
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("询问 DevCodex…") },
+                    placeholder = { Text("有什么可以帮你的？") },
                     maxLines = 6,
                     shape = MaterialTheme.shapes.extraLarge,
                     leadingIcon = {
-                        Icon(
-                            Icons.Filled.AttachFile, "上传附件",
-                            Modifier.clickable { onAttach() },
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        // Claude 风格：细描边圆 + 加号附件入口
+                        Box(
+                            Modifier
+                                .size(32.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .border(1.dp, MaterialTheme.colorScheme.outline, androidx.compose.foundation.shape.CircleShape)
+                                .clickable { onAttach() },
+                            contentAlignment = androidx.compose.ui.Alignment.Center,
+                        ) {
+                            Text("+", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     },
                 )
                 Spacer(Modifier.width(8.dp))

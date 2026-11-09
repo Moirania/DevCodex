@@ -14,6 +14,7 @@ package ai.devcodex.agent.provider
 data class ModelMeta(
     val tools: Boolean?,
     val vision: Boolean = false,
+    val maxOutput: Int? = null,
     val reasoning: Boolean = false,
     val contextLength: Int? = null,
     val kind: ModelKind = ModelKind.CHAT,
@@ -90,12 +91,32 @@ object ModelRegistry {
     )
 
     /** 查询模型元数据；多条命中时取第一条（规则按特异度排序） */
+    /** 用户手动能力覆盖：字段全可空，null=沿用自动识别（AppViewModel 在设置变化时整体灌入） */
+    @kotlinx.serialization.Serializable
+    data class ModelCapsOverride(
+        val tools: Boolean? = null,
+        val vision: Boolean? = null,
+        val contextLength: Int? = null,
+        val maxOutput: Int? = null,
+    )
+
+    @Volatile private var userOverrides: Map<String, ModelCapsOverride> = emptyMap()
+
+    /** 整体替换用户覆盖表 */
+    fun setOverrides(map: Map<String, ModelCapsOverride>) { userOverrides = map }
+
     fun lookup(modelId: String): ModelMeta {
         val id = modelId.lowercase()
-        for (r in rules) {
-            if (r.keywords.any { id.contains(it) } && r.excludes.none { id.contains(it) }) return r.meta
-        }
-        return ModelMeta.UNKNOWN
+        val rule = rules.firstOrNull { r -> r.keywords.any { id.contains(it) } && r.excludes.none { id.contains(it) } }?.meta ?: ModelMeta.UNKNOWN
+        val o = userOverrides[id] ?: return rule
+        return ModelMeta(
+            tools = o.tools ?: rule.tools,
+            vision = o.vision ?: rule.vision,
+            maxOutput = o.maxOutput ?: rule.maxOutput,
+            reasoning = rule.reasoning,
+            contextLength = o.contextLength ?: rule.contextLength,
+            kind = rule.kind,
+        )
     }
 
     /** 该模型请求是否应携带 tools */

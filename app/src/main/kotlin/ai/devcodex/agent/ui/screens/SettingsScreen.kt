@@ -143,45 +143,54 @@ fun SettingsScreen(vm: AppViewModel) {
             "skills" -> SkillsPage(vm) { page = "root" }
             "about" -> AboutPage(Modifier.padding(padding)) { page = "root" }
             else -> Column(
-                Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
+                Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 14.dp),
             ) {
-                ListItem(
-                    headlineContent = { Text("技能 Skills") },
-                    supportingContent = { Text("SKILL.md 技能包 · 安装/开关/删除") },
-                    leadingContent = { Icon(Icons.Filled.School, null) },
-                    modifier = Modifier.clickable { page = "skills" },
-                )
-                ListItem(
-                    headlineContent = { Text("使用统计") },
-                    supportingContent = { Text("消息热力图 · 今日/累计数据") },
-                    leadingContent = { Icon(Icons.Filled.BarChart, null) },
-                    modifier = Modifier.clickable { page = "stats" },
-                )
-                ListItem(
-                    headlineContent = { Text("主题与字体") },
-                    supportingContent = { Text("预设主题 · 深色模式 · AMOLED · 字体") },
-                    leadingContent = { Icon(Icons.Filled.Palette, null) },
-                    modifier = Modifier.clickable { page = "theme" },
-                )
-                ListItem(
-                    headlineContent = { Text("工具与权限") },
-                    supportingContent = { Text("内置工具开关 · Shizuku · Root · 无障碍") },
-                    leadingContent = { Icon(Icons.Filled.Construction, null) },
-                    modifier = Modifier.clickable { page = "tools" },
-                )
-                ListItem(
-                    headlineContent = { Text("系统提示词") },
-                    supportingContent = { Text((if (settings.customSystemPrompt.isBlank()) "内置默认" else "自定义 · ${settings.customSystemPrompt.take(14)}…") + (if (settings.safetyBoundary) " · 安全世界开" else "")) },
-                    leadingContent = { Icon(Icons.Filled.Notes, null) },
-                    modifier = Modifier.clickable { page = "prompt" },
-                )
-                HorizontalDivider()
-                ListItem(
-                    headlineContent = { Text("关于与赞助") },
-                    supportingContent = { Text("作者 · 反馈 · 喝杯奶茶 · 隐私政策") },
-                    leadingContent = { Icon(Icons.Filled.Favorite, null) },
-                    modifier = Modifier.clickable { page = "about" },
-                )
+                // Claude 风格设置卡：大圆角白卡 + 行间细分隔线
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest),
+                ) {
+                    ListItem(
+                        headlineContent = { Text("技能 Skills") },
+                        supportingContent = { Text("SKILL.md 技能包 · 安装/开关/删除") },
+                        leadingContent = { Icon(Icons.Filled.School, null) },
+                        modifier = Modifier.clickable { page = "skills" },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    ListItem(
+                        headlineContent = { Text("使用统计") },
+                        supportingContent = { Text("消息热力图 · 今日/累计数据") },
+                        leadingContent = { Icon(Icons.Filled.BarChart, null) },
+                        modifier = Modifier.clickable { page = "stats" },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    ListItem(
+                        headlineContent = { Text("主题与字体") },
+                        supportingContent = { Text("预设主题 · 深色模式 · AMOLED · 字体") },
+                        leadingContent = { Icon(Icons.Filled.Palette, null) },
+                        modifier = Modifier.clickable { page = "theme" },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    ListItem(
+                        headlineContent = { Text("工具与权限") },
+                        supportingContent = { Text("内置工具开关 · Shizuku · Root · 无障碍") },
+                        leadingContent = { Icon(Icons.Filled.Construction, null) },
+                        modifier = Modifier.clickable { page = "tools" },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    ListItem(
+                        headlineContent = { Text("系统提示词") },
+                        supportingContent = { Text((if (settings.customSystemPrompt.isBlank()) "内置默认" else "自定义 · ${settings.customSystemPrompt.take(14)}…") + (if (settings.safetyBoundary) " · 安全世界开" else "")) },
+                        leadingContent = { Icon(Icons.Filled.Notes, null) },
+                        modifier = Modifier.clickable { page = "prompt" },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    ListItem(
+                        headlineContent = { Text("关于与赞助") },
+                        supportingContent = { Text("作者 · 反馈 · 喝杯奶茶 · 隐私政策") },
+                        leadingContent = { Icon(Icons.Filled.Favorite, null) },
+                        modifier = Modifier.clickable { page = "about" },
+                    )
+                }
             }
         }
     }
@@ -558,6 +567,29 @@ private fun ToolsPermPage(vm: AppViewModel, settings: AppSettings, modifier: Mod
                         android.net.Uri.parse("package:ai.devcodex.agent")))
                 }
             },
+        )
+        Spacer(Modifier.padding(10.dp))
+
+        // ============ Agent 任务限制（软熔断） ============
+        Text("Agent 任务限制", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.padding(6.dp))
+        var stepsText by remember(settings) { mutableStateOf(if (settings.maxAgentSteps <= 0) "" else settings.maxAgentSteps.toString()) }
+        OutlinedTextField(
+            value = stepsText,
+            onValueChange = { v -> stepsText = v.filter { it.isDigit() }.take(4)
+                vm.saveSettings { s2 -> s2.copy(maxAgentSteps = stepsText.toIntOrNull() ?: 0) } },
+            label = { Text("最大步数") },
+            supportingText = { Text("空 = 不限步（长任务不被腰斩，死循环由软熔断兜底）") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        var wallText by remember(settings) { mutableStateOf(if (settings.agentWallClockMin <= 0) "" else settings.agentWallClockMin.toString()) }
+        OutlinedTextField(
+            value = wallText,
+            onValueChange = { v -> wallText = v.filter { it.isDigit() }.take(4)
+                vm.saveSettings { s2 -> s2.copy(agentWallClockMin = (wallText.toIntOrNull() ?: 0).coerceAtLeast(1)) } },
+            label = { Text("单任务超时（分钟）") },
+            supportingText = { Text("不限步模式下的墙钟上限，超时自动停止") },
+            modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.padding(10.dp))
 

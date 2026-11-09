@@ -116,7 +116,10 @@ data class AppSettings(
     val mediaToolsMigrated: Boolean = false,
     // 导航沉浸默认迁移（v0.3.4）：老用户 bottom 一次性切 immersive，之后手动改回的选择保留
     val navImmersiveMigrated: Boolean = false,
-    val maxAgentSteps: Int = 24,
+    val maxAgentSteps: Int = 0,          // 单任务最大步数：0=不限（死循环由软熔断兜底），>0 到步即停
+    val agentWallClockMin: Int = 30,     // 单任务墙钟超时（分钟），防不限步模式下无限跑
+    // 模型能力手动覆盖（模型名 → 覆盖项；null 字段=自动识别）。影响工具调用/图片输入/上下文窗口/最大输出
+    val modelCaps: Map<String, ai.devcodex.agent.provider.ModelRegistry.ModelCapsOverride> = emptyMap(),
     val autoCompact: Boolean = true,      // 自动压缩上下文（超阈值摘要旧对话）
     // MCP 服务器（Streamable HTTP / SSE）
     val mcpServers: List<ai.devcodex.agent.provider.McpClient.McpServerConfig> = emptyList(),
