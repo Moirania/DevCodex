@@ -208,14 +208,28 @@ fun ChatScreen(vm: AppViewModel) {
         drawerContent = {
             ModalDrawerSheet {
                 Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
+                    Modifier.fillMaxWidth().padding(start = 20.dp, end = 16.dp, top = 18.dp, bottom = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("会话", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    IconButton(onClick = {
-                        vm.openSession(null)
-                        scope.launch { drawerState.close() }
-                    }) { Icon(Icons.Filled.Add, "新建") }
+                    // Claude 侧边栏式：衬线应用名 + 橙色圆底新建
+                    Text(
+                        "DevCodex",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontFamily = ai.devcodex.agent.theme.FlexFonts.AnthropicSerif,
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.FilledIconButton(
+                        onClick = {
+                            vm.openSession(null)
+                            scope.launch { drawerState.close() }
+                        },
+                        modifier = Modifier.size(36.dp),
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
+                            containerColor = androidx.compose.ui.graphics.Color(0xFFD97757),
+                            contentColor = androidx.compose.ui.graphics.Color.White,
+                        ),
+                    ) { Icon(Icons.Filled.Add, "新建", Modifier.size(18.dp)) }
                 }
                 HorizontalDivider()
                 // 角色卡（Operit 式）：列表 + JSON 导入 + 点击开聊
@@ -263,7 +277,7 @@ fun ChatScreen(vm: AppViewModel) {
                             Text(
                                 group,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(start = 20.dp, top = 10.dp, bottom = 2.dp),
                             )
                         }
@@ -484,13 +498,20 @@ fun ChatScreen(vm: AppViewModel) {
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
                                                 if (!msg.thinking.isNullOrBlank()) Text(
-                                                    " · 思考 " + (msg.thinking!!.length) + " 字",
+                                                    " · 思考 " + (msg.thinking?.length ?: 0) + " 字",
                                                     style = MaterialTheme.typography.labelSmall,
                                                     color = MaterialTheme.colorScheme.tertiary,
                                                 )
                                             }
                                         } else if (msg.content.isBlank() && msg.toolCalls.isEmpty() && !msg.thinking.isNullOrBlank()) {
-                                            // 纯思考消息：不渲染空正文（修"（空）"占位）
+                                            // 纯思考流式中：显示星芒动画行（修"思考时正文区毫无动静像卡死"）
+                                            if (isRunning && idx == messages.lastIndex) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
+                                                    ai.devcodex.agent.ui.components.ClaudeSpark(sparkSize = 16.dp, animate = true)
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Text("正在思考…", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                            }
                                         } else if (msg.content.isNotBlank()) {
                                             // 性能关键：流式输出中（最后一条+运行中）用轻量纯 Text，
                                             // 完成后一次性切换 M3L 富渲染（Markdown/代码高亮/LaTeX/表格）
@@ -1009,26 +1030,14 @@ private fun EmptyHint(onExample: (String) -> Unit) {
         Modifier.fillMaxWidth().padding(top = 56.dp, start = 24.dp, end = 24.dp),
         horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
     ) {
-        // Claude 式橙色星芒（12 根放射线自绘）
-        androidx.compose.foundation.Canvas(Modifier.size(44.dp)) {
-            val cx = size.width / 2; val cy = size.height / 2
-            val rOuter = size.minDimension / 2f; val rInner = rOuter * 0.28f
-            val rot = java.lang.System.currentTimeMillis() / 4000f
-            for (i in 0 until 12) {
-                val a = rot + i * (Math.PI * 2 / 12).toFloat()
-                androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * rInner, cy + kotlin.math.sin(a) * rInner).let { s0 ->
-                    androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * rOuter, cy + kotlin.math.sin(a) * rOuter).let { s1 ->
-                        drawLine(androidx.compose.ui.graphics.Color(0xFFD97757), s0, s1, strokeWidth = 2.2f)
-                    }
-                }
-            }
-        }
+        // Claude 式橙色星芒（动画版：逐根伸缩）
+        ai.devcodex.agent.ui.components.ClaudeSpark(sparkSize = 44.dp, animate = true)
         Spacer(Modifier.height(14.dp))
-        // 衬线大字问候（按时段/星期）
+        // 衬线大字问候（按小时自动刷新，不固定）
+        val cal = java.util.Calendar.getInstance()
+        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         Text(
-            remember {
-                val cal = java.util.Calendar.getInstance()
-                val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+            remember(hour) {
                 val weekGreet = listOf("周日好", "周一快乐", "周二加油", "周三过半了", "周四坚持", "周五愉快", "周六轻松")[cal.get(java.util.Calendar.DAY_OF_WEEK) - 1]
                 when {
                     hour < 5 -> "夜深了"

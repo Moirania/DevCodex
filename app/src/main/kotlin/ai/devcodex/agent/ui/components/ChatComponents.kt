@@ -51,6 +51,17 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -177,6 +188,7 @@ fun ClaudeSpark(modifier: Modifier = Modifier, sparkSize: androidx.compose.ui.un
         val rOuter = size.minDimension / 2f
         val rInner = rOuter * 0.22f
         val twoPi = (2.0 * Math.PI).toFloat()
+        val stroke = 1.6.dp.toPx()  // 修复：像素单位在高密度屏上细成一点（装机实测主界面只剩橙色一撇）
         for (i in 0 until 12) {
             val phase = (progress + i / 12f) % 1f
             val pulse = 0.5f + 0.5f * kotlin.math.sin(phase * twoPi)
@@ -186,7 +198,7 @@ fun ClaudeSpark(modifier: Modifier = Modifier, sparkSize: androidx.compose.ui.un
                 color = androidx.compose.ui.graphics.Color(0xFFD97757).copy(alpha = 0.35f + 0.65f * pulse),
                 start = androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * rInner, cy + kotlin.math.sin(a) * rInner),
                 end = androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(a) * r, cy + kotlin.math.sin(a) * r),
-                strokeWidth = 2f,
+                strokeWidth = stroke,
                 cap = androidx.compose.ui.graphics.StrokeCap.Round,
             )
         }
@@ -224,7 +236,24 @@ fun ThinkingBlock(text: String) {
     }
 }
 
-// ============ 工具卡片（rikkahub 式：图标 + 名称 + 状态 + 参数摘要） ============
+// ============ 工具卡片（Operit 式：专属图标 + 名称 + 参数摘要 + 状态） ============
+/** Operit 式工具专属图标映射：一眼识别工具类型 */
+private fun toolIconOf(name: String): androidx.compose.ui.graphics.vector.ImageVector = when {
+    name.startsWith("fs_") -> Icons.Filled.Description
+    name == "python_run" || name == "node_run" -> Icons.Filled.Code
+    name == "http_request" -> Icons.Filled.Public
+    name == "web_search" -> Icons.Filled.Search
+    name.contains("image_generate") -> Icons.Filled.Image
+    name.contains("video") -> Icons.Filled.PlayArrow
+    name.startsWith("clipboard") -> Icons.Filled.ContentCopy
+    name.startsWith("app_") -> Icons.Filled.Apps
+    name == "screenshot_take" -> Icons.Filled.CameraAlt
+    name.startsWith("calendar") -> Icons.Filled.DateRange
+    name == "notify_post" || name == "alarm_set" -> Icons.Filled.Notifications
+    name == "wifi_state" -> Icons.Filled.Wifi
+    else -> Icons.Filled.Terminal
+}
+
 @Composable
 fun ToolCard(msg: Message, argsJson: String = "", live: Boolean = true) {
     var expanded by remember { mutableStateOf(false) }
@@ -265,7 +294,7 @@ fun ToolCard(msg: Message, argsJson: String = "", live: Boolean = true) {
                 modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
             ) {
                 Icon(
-                    Icons.Filled.Terminal, null,
+                    toolIconOf(msg.toolName ?: ""), null,
                     Modifier.size(16.dp),
                     tint = when (status) {
                         ToolStatus.ERROR -> MaterialTheme.colorScheme.error
@@ -274,23 +303,49 @@ fun ToolCard(msg: Message, argsJson: String = "", live: Boolean = true) {
                     },
                 )
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    msg.toolName ?: "tool",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontFamily = Mono,
-                    modifier = Modifier.weight(1f),
-                )
+                // Operit 式：工具名 + 参数摘要同行（未展开时一眼看清在干什么）
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        msg.toolName ?: "tool",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontFamily = Mono,
+                    )
+                    if (!expanded && argsJson.isNotBlank() && argsJson != "{}") {
+                        Text(
+                            argsJson.replace(Regex("\\s+"), " ").let { if (it.length > 48) it.take(48) + "…" else it },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = Mono,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                            maxLines = 1,
+                        )
+                    }
+                }
                 when (status) {
                     ToolStatus.RUNNING ->
-                        if (live) CircularProgressIndicator(Modifier.size(13.dp).alpha(tAlpha), strokeWidth = 1.5.dp)
+                        if (live) ClaudeSpark(Modifier.size(14.dp), sparkSize = 14.dp, animate = true)
                         else Icon(Icons.Filled.Close, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    ToolStatus.PENDING ->
-                        Icon(Icons.Filled.Schedule, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    ToolStatus.AWAITING_APPROVAL ->
-                        Icon(Icons.Filled.Warning, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.tertiary)
-                    ToolStatus.DONE -> Icon(Icons.Filled.CheckCircle, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
-                    ToolStatus.ERROR -> Icon(Icons.Filled.ErrorOutline, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.error)
-                    ToolStatus.DENIED -> Icon(Icons.Filled.Block, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    else -> {
+                        // OpenMinis 式：完成后右侧灰字耗时（0.5s / 5s / 1.2m）
+                        if (msg.toolMs > 0) {
+                            val sec = msg.toolMs / 1000.0
+                            Text(
+                                if (sec >= 60) String.format("%.1fm", sec / 60) else String.format("%.1fs", sec),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = Mono,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            )
+                        }
+                        when (status) {
+                            ToolStatus.PENDING ->
+                                Icon(Icons.Filled.Schedule, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            ToolStatus.AWAITING_APPROVAL ->
+                                Icon(Icons.Filled.Warning, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.tertiary)
+                            ToolStatus.DONE -> Icon(Icons.Filled.CheckCircle, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
+                            ToolStatus.ERROR -> Icon(Icons.Filled.ErrorOutline, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.error)
+                            ToolStatus.DENIED -> Icon(Icons.Filled.Block, null, Modifier.size(13.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            else -> {}
+                        }
+                    }
                 }
                 if (expanded) Icon(Icons.Filled.ExpandLess, null, Modifier.size(14.dp))
                 else Icon(Icons.Filled.ExpandMore, null, Modifier.size(14.dp))

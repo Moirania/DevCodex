@@ -499,6 +499,51 @@ private fun ToolsPermPage(vm: AppViewModel, settings: AppSettings, modifier: Mod
 
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
 
+        // ============ 沙箱环境状态（OpenMinis 式可视化） ============
+        Text("沙箱环境", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.padding(6.dp))
+        run {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val st = remember { runCatching {
+                Triple(
+                    ai.devcodex.agent.shell.TermuxRuntime.isReady(ctx),
+                    java.io.File(ctx.filesDir, "termux/usr/bin/bash").isFile,
+                    java.io.File(ctx.filesDir, "ubuntu/bin").isDirectory,
+                )
+            }.getOrDefault(Triple(false, false, false)) }
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(14.dp),
+            ) {
+                listOf(
+                    Triple("busybox 兜底 Shell", st.first, "可用" to "不可用"),
+                    Triple("Termux 环境（bash/apt）", st.second, "已就绪" to "解压中/缺失"),
+                    Triple("Ubuntu rootfs（PRoot）", st.third, "已解压" to "未初始化"),
+                ).forEach { (name, ok, labels) ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(name, style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            (if (ok) "✓ " else "· ") + (if (ok) labels.first else labels.second),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f), modifier = Modifier.padding(vertical = 4.dp))
+                Text(
+                    "工作区 " + ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().absolutePath,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "PRoot 不可用时（ROM 禁 ptrace）自动降级 Termux/busybox，命令仍可执行",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
+            }
+        }
+        Spacer(Modifier.padding(10.dp))
+
         // ============ AXS / Termux 服务 ============
         Text("AXS / Termux 服务", style = MaterialTheme.typography.titleMedium)
         Text("在 Termux 里启动 AXS 等 HTTP shell 服务后填地址，本应用获得 ADB 级特权通道（优先于沙盒）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

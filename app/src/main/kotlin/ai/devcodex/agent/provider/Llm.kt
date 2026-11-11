@@ -80,21 +80,29 @@ suspend fun streamPost(
     request: Request,
     onLine: (String) -> Unit,
 ): Response = withContext(Dispatchers.IO) {
-    val response = client.newCall(request).await()
-    if (!response.isSuccessful) {
-        val body = response.body?.string()?.take(500) ?: ""
-        throw IOException("HTTP ${response.code}: $body")
+    val call = client.newCall(request)
+    val response = call.await()
+    // 取消响应性：协程一旦被取消（用户点停止）立即强关响应——阻塞中的 readLine 会立刻抛错退出，
+    // 不再等 IO 超时（装机实测"停止按钮卡住几十秒"根因）
+    kotlin.coroutines.coroutineContext[kotlinx.coroutines.Job]?.invokeOnCompletion { cause ->
+        if (cause != null) runCatching { response.close() }
     }
-    val reader = BufferedReader(InputStreamReader(response.body!!.byteStream()))
-    withContext(Dispatchers.IO) {
+    try {
+        if (!response.isSuccessful) {
+            val body = response.body?.string()?.take(500) ?: ""
+            throw IOException("HTTP ${response.code}: $body")
+        }
+        val reader = BufferedReader(InputStreamReader(response.body!!.byteStream()))
         while (true) {
             val line = reader.readLine() ?: break
             if (line.isEmpty()) continue
             onLine(line)
         }
+        response
+    } finally {
+        // 正常结束或异常（含取消强关导致的 IO 错误）都释放连接，防泄漏
+        runCatching { response.close() }
     }
-    response.close()
-    response
 }
 
 fun jsonBody(element: JsonElement): okhttp3.RequestBody =

@@ -69,6 +69,7 @@ data class Message(
     val toolName: String? = null,
     val toolStatus: ToolStatus = ToolStatus.DONE,
     val toolResult: String? = null,         // 工具输出（展示用）
+    val toolMs: Long = 0,                   // 工具执行耗时（OpenMinis 式时间线展示）
     val thinking: String? = null,
     val thinkingSignature: String? = null,   // Anthropic thinking 签名，多轮工具调用回传用
     val thinkingMs: Long = 0,

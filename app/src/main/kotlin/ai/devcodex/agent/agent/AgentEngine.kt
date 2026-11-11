@@ -412,7 +412,7 @@ class AgentEngine(
                         }
                     ai.devcodex.agent.util.DebugLog.i("Tool", "end ${tc.name} id=${tc.id} cost=${System.currentTimeMillis() - toolT0}ms error=${result.startsWith("ERROR")} resultLen=${result.length} head=${result.take(200)}")
                     current = current.patch(toolMsgId) {
-                        it.copy(toolResult = result, toolStatus = if (result.startsWith("ERROR")) ToolStatus.ERROR else ToolStatus.DONE)
+                        it.copy(toolResult = result, toolStatus = if (result.startsWith("ERROR")) ToolStatus.ERROR else ToolStatus.DONE, toolMs = System.currentTimeMillis() - toolT0)
                     }
                     onUpdate(current)
                 }
