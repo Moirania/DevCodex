@@ -175,7 +175,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _activeSession.value = updated
         bumpGen(updated.id)
         saveSessionBg(updated)
-        startAgent(updated)
+        // v0.4.2 生图模型直通：主界面选中生图模型时发提示词直接出图，不占 agent 循环（装机反馈"生图模型选不到"）
+        val mProvider = latestSettings.providers.find { it.id == session.providerId }
+            ?: latestSettings.providers.firstOrNull { it.enabled }
+        val mModelId = session.modelId ?: mProvider?.enabledModels?.firstOrNull { ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) }
+        if (mProvider != null && mModelId != null && ai.devcodex.agent.provider.ModelRegistry.kindOf(mModelId) != ai.devcodex.agent.provider.ModelKind.CHAT) {
+            sendMediaDirect(updated, mProvider, mModelId, display)
+        } else {
+            startAgent(updated)
+        }
+    }
+
+    /** 生图/视频模型直通：prompt → MediaClient → 图片落工作区 → 消息带图返回 */
+    private fun sendMediaDirect(session: ai.devcodex.agent.data.ChatSession, provider: ai.devcodex.agent.data.ProviderConfig, modelId: String, display: String) {
+        isRunning.value = true
+        viewModelScope.launch {
+            try {
+                val reply: ai.devcodex.agent.data.Message = if (ai.devcodex.agent.provider.ModelRegistry.kindOf(modelId) == ai.devcodex.agent.provider.ModelKind.VIDEO) {
+                    ai.devcodex.agent.data.Message(
+                        id = java.util.UUID.randomUUID().toString(), role = "assistant", model = modelId,
+                        content = "当前是视频模型（$modelId）。视频生成请用 image_generate 工具的 video 模式，或换选聊天/生图模型。",
+                        timestamp = System.currentTimeMillis(),
+                    )
+                } else {
+                    ai.devcodex.agent.provider.MediaClient.generateImages(provider.copy(imageModel = modelId), display, "1024x1024", 1)
+                        .mapCatching { imgs ->
+                            val paths = imgs.mapIndexed { i, bytes ->
+                                val name = "gen_" + System.currentTimeMillis() + (if (imgs.size > 1) "_$i" else "") + ".png"
+                                java.io.File(workspaceRepo.root, name).writeBytes(bytes)
+                                name
+                            }
+                            ai.devcodex.agent.data.Message(
+                                id = java.util.UUID.randomUUID().toString(), role = "assistant", model = modelId,
+                                content = "已生成 ${paths.size} 张图片（已存工作区）：\n" + paths.joinToString("\n"),
+                                imagePaths = paths,
+                                timestamp = System.currentTimeMillis(),
+                            )
+                        }
+                        .getOrElse { e ->
+                            ai.devcodex.agent.util.DebugLog.e("Media", "generate direct failed model=$modelId", e)
+                            ai.devcodex.agent.data.Message(
+                                id = java.util.UUID.randomUUID().toString(), role = "assistant", model = modelId,
+                                content = "生图失败：${e.message}",
+                                timestamp = System.currentTimeMillis(),
+                            )
+                        }
+                }
+                val updated = session.copy(messages = session.messages + reply, updatedAt = System.currentTimeMillis())
+                if (_activeSession.value?.id == updated.id) _activeSession.value = updated
+                saveSessionBg(updated)
+            } finally {
+                isRunning.value = false
+            }
+        }
     }
 
     /** 重发：截断该提问之后的所有消息（含回答），保留提问本身重新生成——不再追加重复提问 */

@@ -854,9 +854,8 @@ fun ChatScreen(vm: AppViewModel) {
                                 modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp),
                             )
                         }
-                        val filtered = p.enabledModels.filter {
-                            ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) && it.contains(query, ignoreCase = true)
-                        }
+                        // v0.4.2：不过滤生图/视频模型（装机反馈"生图模型搜索不到"）——全部可见，选中即直通生图
+                        val filtered = p.enabledModels.filter { it.contains(query, ignoreCase = true) }
                         items(filtered.size, key = { p.id + '-' + filtered[it] + '-' + it }) { i ->
                             val m = filtered[i]
                             val selected = session?.modelId == m && session?.providerId == p.id
@@ -900,6 +899,11 @@ fun ChatScreen(vm: AppViewModel) {
                                     )
                                     val meta = ai.devcodex.agent.provider.ModelRegistry.lookup(m)
                                     val badges = buildList {
+                                        when (ai.devcodex.agent.provider.ModelRegistry.kindOf(m)) {
+                                            ai.devcodex.agent.provider.ModelKind.IMAGE -> add("生图" to 0xFFD93025)
+                                            ai.devcodex.agent.provider.ModelKind.VIDEO -> add("视频" to 0xFFD93025)
+                                            else -> {}
+                                        }
                                         meta.tools?.let { if (it) add("工具调用" to 0xFF1A73E8) }
                                         if (meta.vision) add("视觉" to 0xFF8E24AA)
                                         if (meta.reasoning) add("深度思考" to 0xFFE8710A)
