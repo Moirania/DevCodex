@@ -67,7 +67,10 @@ fun AppRoot(vm: AppViewModel) {
     val theme = settings.theme
 
     fun navigate(i: Int) {
-        if (tabIdx != i) {
+        // 修"设置页对话按钮点不动"：沉浸模式经 navRequest 直跳不经过本函数，tabIdx 可能与实际路由失同步，
+        // 守卫改为「目标 tab 未选中 或 当前路由不是目标页」才跳转（失同步时强制跳转自愈）
+        val currentRoute = nav.currentDestination?.route
+        if (tabIdx != i || currentRoute != tabs[i].route) {
             tabIdx = i
             nav.navigate(tabs[i].route) {
                 popUpTo(nav.graph.startDestinationId) { saveState = true }

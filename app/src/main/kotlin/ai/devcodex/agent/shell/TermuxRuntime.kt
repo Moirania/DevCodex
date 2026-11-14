@@ -28,7 +28,11 @@ object TermuxRuntime {
     fun bash(context: Context): File = File(prefix(context), "bin/bash")
 
     fun isReady(context: Context): Boolean =
-        busybox(context).isFile && busybox(context).canExecute()
+        // 三通道任一可执行即就绪：assets busybox_static / bootstrap zip 自带 bin/busybox / bin/bash
+        // （v0.4.1 状态卡误报根因：只查 busybox_static，自愈重解压后 zip 版 busybox 在但 static 版被 wipe）
+        (busybox(context).isFile && busybox(context).canExecute()) ||
+            File(prefix(context), "bin/busybox").let { it.isFile && it.canExecute() } ||
+            bash(context).let { it.isFile && it.canExecute() }
 
     @Synchronized
     fun ensure(context: Context): Boolean {
@@ -179,10 +183,17 @@ object TermuxRuntime {
             "Dir::State::status \"$p/var/lib/dpkg/status\";\n" +
             "Dir::Cache \"$p/var/cache/apt\";\n" +
             "Dir::Etc \"$p/etc/apt\";\n" +
+            "Dir::Etc::main \"$p/etc/apt/apt.conf\";\n" +
+            "Dir::Etc::parts \"$p/etc/apt/apt.conf.d\";\n" +
+            "Dir::Etc::sourceparts \"$p/etc/apt/sources.list.d\";\n" +
+            "Dir::Etc::sourcelist \"$p/etc/apt/sources.list\";\n" +
             "Dir::Bin::methods \"$p/lib/apt/methods\";\n" +
             "Dir::Bin::dpkg \"$p/bin/dpkg\";\n" +
             "Dir::Bin::gzip \"$p/bin/gzip\";\n" +
             "Dir::Bin::tar \"$p/bin/tar\";\n" +
+            "Dir::Bin::apt-key \"$p/bin/apt-key\";\n" +
+            "Dir::Bin::gpgv \"$p/bin/gpgv\";\n" +
+            "Dir::Bin::gpg \"$p/bin/gpg\";\n" +
             "DPkg::Options { \"--root=$p\"; \"--admindir=$p/var/lib/dpkg\"; \"--log=$p/var/log/dpkg.log\"; };\n"
         )
         File(aptEtc, "sources.list").writeText("deb https://packages.termux.dev/apt/termux-main stable main\n")
@@ -304,8 +315,15 @@ object TermuxRuntime {
             // 独立读线程 + 带超时 waitFor：withTimeoutOrNull 无法中断阻塞的 readLine，协程超时在这里是假的
             val out = StringBuilder()
             val t = Thread {
-                p.inputStream.bufferedReader().forEachLine { line ->
-                    synchronized(out) { if (out.length < 100_000) out.appendLine(line) }
+                // 进程被超时 destroyForcibly 时读流中断（InterruptedIOException/Stream closed）是正常收尾，
+                // 绝不上抛 uncaughtHandler（装机实测 Thread-15 崩溃根因）
+                try {
+                    p.inputStream.bufferedReader().forEachLine { line ->
+                        synchronized(out) { if (out.length < 100_000) out.appendLine(line) }
+                    }
+                } catch (_: java.io.InterruptedIOException) {
+                } catch (_: java.io.IOException) {
+                } catch (_: Throwable) {
                 }
             }
             t.isDaemon = true; t.start()

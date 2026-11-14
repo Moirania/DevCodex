@@ -515,7 +515,7 @@ private fun ToolsPermPage(vm: AppViewModel, settings: AppSettings, modifier: Mod
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(MaterialTheme.colorScheme.surfaceContainerLowest).padding(14.dp),
             ) {
                 listOf(
-                    Triple("busybox 兜底 Shell", st.first, "可用" to "不可用"),
+                    Triple("命令引擎（busybox/bash）", st.first, "可用" to "不可用"),
                     Triple("Termux 环境（bash/apt）", st.second, "已就绪" to "解压中/缺失"),
                     Triple("Ubuntu rootfs（PRoot）", st.third, "已解压" to "未初始化"),
                 ).forEach { (name, ok, labels) ->
