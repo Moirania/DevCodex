@@ -21,8 +21,8 @@ android {
         applicationId = "ai.devcodex.agent"
         minSdk = 26
         targetSdk = 28
-        versionCode = 92
-        versionName = "0.4.3"
+        versionCode = 93
+        versionName = "0.4.4"
     }
 
     splits {
@@ -61,7 +61,8 @@ android {
             signingConfig = signingConfigs.getByName("fixedDebug")
         }
         release {
-            isMinifyEnabled = true
+            // v0.4.4 起关闭 R8 混淆：装机堆栈直接可读（用户排查 bug 优先，包体增大可接受）
+            isMinifyEnabled = false
             isShrinkResources = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")

@@ -294,7 +294,11 @@ class AgentEngine(
                 var toolsDropped = effectiveSchemas.isEmpty()
                 while (true) {
                     val r = runCatching { streamPost(LlmClient, request) { line -> current = consume(line) } }
-                    if (r.isSuccess) break
+                    if (r.isSuccess) {
+                        // SSE 汇总诊断（装机排查"思考完不输出正文"）：content=0 且 toolCalls=0 说明模型/网关确实没发正文
+                        ai.devcodex.agent.util.DebugLog.i("LLM", "turn done: content=${text.length}ch thinking=${think.length}ch toolCalls=${toolAgg.size} model=$model tools=${effectiveSchemas.size}")
+                        break
+                    }
                     val err = r.exceptionOrNull()!!
                     if (err is CancellationException) throw err
                     val msg = err.message ?: err.toString()
