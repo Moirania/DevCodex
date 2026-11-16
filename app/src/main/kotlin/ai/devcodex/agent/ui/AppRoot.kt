@@ -70,6 +70,7 @@ fun AppRoot(vm: AppViewModel) {
         // 修"设置页对话按钮点不动"：沉浸模式经 navRequest 直跳不经过本函数，tabIdx 可能与实际路由失同步，
         // 守卫改为「目标 tab 未选中 或 当前路由不是目标页」才跳转（失同步时强制跳转自愈）
         val currentRoute = nav.currentDestination?.route
+        ai.devcodex.agent.util.DebugLog.i("Nav", "navigate tab=${tabs[i].route} fromTabIdx=$tabIdx fromRoute=$currentRoute")
         if (tabIdx != i || currentRoute != tabs[i].route) {
             tabIdx = i
             nav.navigate(tabs[i].route) {
@@ -77,6 +78,8 @@ fun AppRoot(vm: AppViewModel) {
                 launchSingleTop = true
                 restoreState = true
             }
+        } else {
+            ai.devcodex.agent.util.DebugLog.i("Nav", "navigate skipped (already at ${tabs[i].route})")
         }
     }
 
@@ -92,6 +95,7 @@ fun AppRoot(vm: AppViewModel) {
     LaunchedEffect(Unit) {
         vm.navRequest.collect { req ->
             if (req != null) {
+                ai.devcodex.agent.util.DebugLog.i("Nav", "navRequest=$req (tabIdx=$tabIdx route=${nav.currentDestination?.route})")
                 val immersiveNow = theme.immersive || theme.navPosition == "immersive"
                 when {
                     req == "back" -> runCatching { nav.popBackStack() }
@@ -125,6 +129,7 @@ fun AppRoot(vm: AppViewModel) {
         val listener = androidx.navigation.NavController.OnDestinationChangedListener { _, destination, _ ->
             val i = tabs.indexOfFirst { it.route == destination.route }
             if (i >= 0) tabIdx = i
+            ai.devcodex.agent.util.DebugLog.i("Nav", "destination changed -> ${destination.route} (tabIdx=$tabIdx)")
         }
         nav.addOnDestinationChangedListener(listener)
         onDispose { nav.removeOnDestinationChangedListener(listener) }

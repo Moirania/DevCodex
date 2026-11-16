@@ -21,8 +21,8 @@ android {
         applicationId = "ai.devcodex.agent"
         minSdk = 26
         targetSdk = 28
-        versionCode = 93
-        versionName = "0.4.4"
+        versionCode = 94
+        versionName = "0.4.5"
     }
 
     splits {

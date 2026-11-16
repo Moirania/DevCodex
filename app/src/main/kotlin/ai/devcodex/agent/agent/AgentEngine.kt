@@ -292,6 +292,10 @@ class AgentEngine(
                 // 请求：HTTP 400 且带 tools 时降级去掉 tools 重试一次；其他失败最多重试 2 次，仍失败则明确报错终止
                 var attempt = 0
                 var toolsDropped = effectiveSchemas.isEmpty()
+                // thinking 降级：中转站/新模型（如 claude-sonnet-5-5）只认 adaptive thinking 或拒绝旧式
+                // thinking 参数——400 且报错含 thinking 时去掉 reasoningEffort 重试（装机实测 2026-11-15）
+                var eff = effort
+                var thinkingDropped = false
                 while (true) {
                     val r = runCatching { streamPost(LlmClient, request) { line -> current = consume(line) } }
                     if (r.isSuccess) {
@@ -307,9 +311,16 @@ class AgentEngine(
                     text.clear(); think.clear(); toolAgg.clear()
                     current = current.patch(assistantId) { it.copy(content = "", thinking = null, thinkingSignature = null, toolCalls = emptyList()) }
                     onUpdate(current)
+                    if (!thinkingDropped && eff.isNotBlank() && msg.contains("HTTP 400") && msg.contains("thinking")) {
+                        thinkingDropped = true
+                        eff = ""
+                        ai.devcodex.agent.util.DebugLog.w("Agent", "dropping thinking param for $model (400) and retrying")
+                        request = ProviderGateway.chatRequest(provider, model, systemPrompt, turns, effectiveSchemas, stream = true, reasoningEffort = "")
+                        continue
+                    }
                     if (!toolsDropped && msg.contains("HTTP 400")) {
                         toolsDropped = true
-                        request = ProviderGateway.chatRequest(provider, model, systemPrompt, turns, emptyList(), stream = true, reasoningEffort = effort)
+                        request = ProviderGateway.chatRequest(provider, model, systemPrompt, turns, emptyList(), stream = true, reasoningEffort = eff)
                         continue
                     }
                     attempt++
