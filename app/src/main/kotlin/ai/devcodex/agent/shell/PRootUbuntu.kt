@@ -14,6 +14,24 @@ object PRootUbuntu {
 
     fun rootfsDir(ctx: Context): File = File(ctx.filesDir, "ubuntu")
 
+    /** 状态透出（v0.4.6）：就绪 / 未初始化 / 失败原因（含 ptrace 物理限制）——设置状态卡与工具报错共用 */
+    fun status(ctx: Context): Pair<Boolean, String?> {
+        val ready = rootfsDir(ctx).resolve("bin").exists() && File(ctx.filesDir, "proot-bin/proot").exists()
+        return when {
+            ready && prootBroken == false -> true to null
+            prootBroken == true -> false to "此设备 ROM 禁用 ptrace（seccomp），PRoot 无法运行——Ubuntu 沙箱在此设备上不可用，Termux 通道不受影响"
+            else -> false to ensureFatal
+        }
+    }
+
+    /** 重试（v0.4.6）：清失败缓存 + readyMark，下次 ensure 重新解压 rootfs（约 1 分钟） */
+    fun resetAndRetry(ctx: Context) {
+        ensureFatal = null
+        prootBroken = null
+        initialized = false
+        File(rootfsDir(ctx), ".devcodex_ready").delete()
+    }
+
     /** 首次解压 proot 二进制 + rootfs（~80MB 解压后），进度回调 0..100 */
     fun ensure(ctx: Context, onProgress: (Int) -> Unit = {}): Boolean {
         if (initialized && rootfsDir(ctx).resolve("bin").exists()) return true

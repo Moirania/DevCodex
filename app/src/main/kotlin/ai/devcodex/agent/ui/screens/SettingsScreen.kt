@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.BugReport
@@ -108,6 +109,26 @@ import ai.devcodex.agent.theme.PresetThemes
 fun SettingsScreen(vm: AppViewModel) {
     val settings by vm.settings.collectAsState(initial = ai.devcodex.agent.data.AppSettings())
     var page by remember { mutableStateOf("root") }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var importing by remember { mutableStateOf(false) }
+
+    // 聊天记录导入（v0.4.6）：RikkaHub zip / Chatbox JSON / 通用 messages JSON，格式自动嗅探
+    val importPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        importing = true
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            val result = runCatching {
+                ctx.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                ai.devcodex.agent.data.ChatImporter.import(ctx, uri, vm.sessionRepo)
+            }.getOrElse { ai.devcodex.agent.data.ChatImporter.ImportResult(0, 0, "导入失败：${it.message}") }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                importing = false
+                vm.toast.value = if (result.sessions > 0) "已导入 ${result.detail}" else result.detail
+            }
+        }
+    }
 
     Scaffold(topBar = {
         TopAppBar(title = {
@@ -161,6 +182,13 @@ fun SettingsScreen(vm: AppViewModel) {
                         supportingContent = { Text("消息热力图 · 今日/累计数据") },
                         leadingContent = { Icon(Icons.Filled.BarChart, null) },
                         modifier = Modifier.clickable { page = "stats" },
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    ListItem(
+                        headlineContent = { Text("导入聊天记录") },
+                        supportingContent = { Text("RikkaHub 备份 zip · Chatbox JSON · 通用 messages JSON") },
+                        leadingContent = { Icon(Icons.Filled.FileDownload, null) },
+                        modifier = Modifier.clickable { importPicker.launch(arrayOf("*/*")) },
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                     ListItem(
@@ -504,6 +532,8 @@ private fun ToolsPermPage(vm: AppViewModel, settings: AppSettings, modifier: Mod
         Spacer(Modifier.padding(6.dp))
         run {
             val ctx = androidx.compose.ui.platform.LocalContext.current
+            var ubuntuSt by remember { mutableStateOf<Pair<Boolean, String?>?>(null) }
+            LaunchedEffect(Unit) { ubuntuSt = ai.devcodex.agent.shell.PRootUbuntu.status(ctx) }
             val st = remember { runCatching {
                 Triple(
                     ai.devcodex.agent.shell.TermuxRuntime.isReady(ctx),
@@ -517,9 +547,23 @@ private fun ToolsPermPage(vm: AppViewModel, settings: AppSettings, modifier: Mod
                 listOf(
                     Triple("命令引擎（busybox/bash）", st.first, "可用" to "不可用"),
                     Triple("Termux 环境（bash/apt）", st.second, "已就绪" to "解压中/缺失"),
-                    Triple("Ubuntu rootfs（PRoot）", st.third, "已解压" to "未初始化"),
+                    Triple("Ubuntu rootfs（PRoot）", ubuntuSt?.first == true, "已就绪" to (ubuntuSt?.second ?: "未初始化")),
                 ).forEach { (name, ok, labels) ->
-                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(Modifier.fillMaxWidth()
+                        .let { m -> if (name.startsWith("Ubuntu") && !ok) m.clickable {
+                            // v0.4.6：Ubuntu 失败点击重试——清失败缓存重新解压 rootfs（约 1 分钟）
+                            vm.toast.value = "正在重新初始化 Ubuntu（约 1 分钟，期间勿杀进程）"
+                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                ai.devcodex.agent.shell.PRootUbuntu.resetAndRetry(ctx)
+                                val okNow = runCatching { ai.devcodex.agent.shell.PRootUbuntu.ensure(ctx) }.getOrDefault(false)
+                                val stNow = ai.devcodex.agent.shell.PRootUbuntu.status(ctx)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    ubuntuSt = stNow
+                                    vm.toast.value = if (okNow) "Ubuntu 沙箱已就绪" else (stNow.second ?: "初始化失败")
+                                }
+                            }
+                        } else m }
+                        .padding(vertical = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(name, style = MaterialTheme.typography.bodyMedium)
                         Text(
                             (if (ok) "✓ " else "· ") + (if (ok) labels.first else labels.second),

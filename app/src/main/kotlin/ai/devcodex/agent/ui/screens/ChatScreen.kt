@@ -96,6 +96,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.text.AnnotatedString
@@ -142,6 +143,8 @@ fun ChatScreen(vm: AppViewModel) {
     var selectedMsg by remember { mutableStateOf<Message?>(null) }
     val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
+    // HTML 代码块预览（v0.4.6）：工具条「预览」按钮触发，WebView 内联渲染
+    var previewHtml by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val attachPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
@@ -560,6 +563,11 @@ fun ChatScreen(vm: AppViewModel) {
                                                                     color = MaterialTheme.colorScheme.primary,
                                                                     modifier = Modifier.weight(1f),
                                                                 )
+                                                                if (block.language.trim().equals("html", ignoreCase = true)) {
+                                                                    TextButton(onClick = { previewHtml = block.code }) {
+                                                                        Text("预览", style = MaterialTheme.typography.labelSmall)
+                                                                    }
+                                                                }
                                                                 TextButton(onClick = {
                                                                     clipboard.setText(AnnotatedString(block.code))
                                                                 }) { Text("复制", style = MaterialTheme.typography.labelSmall) }
@@ -987,6 +995,29 @@ fun ChatScreen(vm: AppViewModel) {
                     vm.deleteMessage(sm.id)
                     selectedMsg = null
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+        )
+    }
+
+    // HTML 预览弹层（v0.4.6）：WebView 离线渲染代码块内容，支持完整 HTML/CSS/JS
+    previewHtml?.let { html ->
+        AlertDialog(
+            onDismissRequest = { previewHtml = null },
+            confirmButton = {
+                TextButton(onClick = { previewHtml = null }) { Text("关闭") }
+            },
+            title = { Text("HTML 预览") },
+            text = {
+                AndroidView(
+                    factory = { ctx -> android.webkit.WebView(ctx) },
+                    update = { wv ->
+                        wv.settings.javaScriptEnabled = true
+                        wv.settings.allowFileAccess = false
+                        wv.webViewClient = android.webkit.WebViewClient()
+                        wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+                    },
+                    modifier = Modifier.fillMaxWidth().height(420.dp),
+                )
             },
         )
     }

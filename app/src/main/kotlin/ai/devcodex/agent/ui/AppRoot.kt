@@ -67,20 +67,22 @@ fun AppRoot(vm: AppViewModel) {
     val theme = settings.theme
 
     fun navigate(i: Int) {
-        // 修"设置页对话按钮点不动"：沉浸模式经 navRequest 直跳不经过本函数，tabIdx 可能与实际路由失同步，
-        // 守卫改为「目标 tab 未选中 或 当前路由不是目标页」才跳转（失同步时强制跳转自愈）
+        // v0.4.6 重写（装机日志实锤：点"对话"先闪 settings 再进 chat，0.8s 双跳）：
+        // 原 popUpTo+restoreState 在栈有中间页时恢复出意外中间态。改为 popBackStack 优先——
+        // 栈中有目标直接弹回（一次到位不经中间页闪烁），没有才 navigate 压栈。
+        val route = tabs[i].route
         val currentRoute = nav.currentDestination?.route
-        ai.devcodex.agent.util.DebugLog.i("Nav", "navigate tab=${tabs[i].route} fromTabIdx=$tabIdx fromRoute=$currentRoute")
-        if (tabIdx != i || currentRoute != tabs[i].route) {
-            tabIdx = i
-            nav.navigate(tabs[i].route) {
-                popUpTo(nav.graph.startDestinationId) { saveState = true }
-                launchSingleTop = true
-                restoreState = true
-            }
-        } else {
-            ai.devcodex.agent.util.DebugLog.i("Nav", "navigate skipped (already at ${tabs[i].route})")
+        ai.devcodex.agent.util.DebugLog.i("Nav", "navigate tab=$route fromTabIdx=$tabIdx fromRoute=$currentRoute")
+        if (currentRoute == route) {
+            ai.devcodex.agent.util.DebugLog.i("Nav", "navigate skipped (already at $route)")
+            return
         }
+        tabIdx = i
+        if (nav.popBackStack(route, inclusive = false)) {
+            ai.devcodex.agent.util.DebugLog.i("Nav", "popped back to $route")
+            return
+        }
+        nav.navigate(route) { launchSingleTop = true }
     }
 
     // 断点检测（LocalConfiguration 尺寸变化重算）
