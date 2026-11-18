@@ -10,6 +10,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.runtime.collectAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -17,10 +21,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-/** 可视化终端（OpenMinis 式 ANSI 模拟器 + Canvas 渲染；通道：Shizuku/Root/沙盒自动降级） */
+/** 可视化终端（OpenManus 虚拟屏：Agent 活动实时流 + OpenMinis 式 ANSI 手动终端） */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
+    // v0.4.7 双 Tab：Agent 活动（OpenManus 风格实时输出流）/ 手动终端（VT 模拟器）
+    var tab by remember { mutableStateOf(0) }
+    val feed by ai.devcodex.agent.data.TerminalFeed.lines.collectAsState()
+
     val emulator = remember { ai.devcodex.agent.term.emulator.TerminalEmulator(cols = 80, rows = 24) }
     var rev by remember { mutableStateOf(0) }   // 重绘触发
     var cmd by remember { mutableStateOf("") }
@@ -79,6 +87,51 @@ fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).imePadding()) {
+            // v0.4.7 OpenManus 虚拟屏：Tab 切换（Agent 活动 / 手动终端）
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Agent 活动") })
+                androidx.compose.material3.FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("手动终端") })
+            }
+            if (tab == 0) {
+                // Agent 活动流（OpenManus 风格：黑底实时输出，命令绿色、时间戳灰）
+                val feedList = feed
+                val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+                LaunchedEffect(feedList.size) {
+                    if (feedList.isNotEmpty()) listState.animateScrollToItem(feedList.size - 1)
+                }
+                Box(Modifier.weight(1f).fillMaxWidth().background(androidx.compose.ui.graphics.Color(0xFF0A0E14))) {
+                    if (feedList.isEmpty()) {
+                        Text(
+                            "Agent 尚未执行工具。\n在对话里让 Agent 干活（跑命令/读写文件），这里会实时显示它的终端输出（OpenManus 虚拟屏风格）。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.ui.graphics.Color(0xFF8B949E),
+                            modifier = Modifier.align(androidx.compose.ui.Alignment.Center).padding(24.dp),
+                        )
+                    } else {
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
+                            items(feedList.size) { i ->
+                                val line = feedList[i]
+                                Text(
+                                    line,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = MaterialTheme.typography.bodySmall.fontSize * 0.9f),
+                                    color = when {
+                                        line.contains("] \$ ") -> androidx.compose.ui.graphics.Color(0xFF7EE787)
+                                        line.contains("ERROR") -> androidx.compose.ui.graphics.Color(0xFFFF7B72)
+                                        else -> androidx.compose.ui.graphics.Color(0xFFC9D1D9)
+                                    },
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 0.5.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = { ai.devcodex.agent.data.TerminalFeed.clear() }) { Text("清空", style = MaterialTheme.typography.labelMedium) }
+                }
+            } else {
             // 通道指示
             val mode = ai.devcodex.agent.shell.ShellAccess.availableMode()
             val modeLabel = when (mode) {
@@ -165,6 +218,7 @@ fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
                         runCommand(c)
                     }
                 }) { Icon(Icons.Filled.PlayArrow, "执行") }
+            }
             }
         }
     }

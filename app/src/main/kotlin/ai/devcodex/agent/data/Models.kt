@@ -173,6 +173,7 @@ data class ThemePrefsData(
     val navPosition: String = "immersive",    // immersive（沉浸，默认）| bottom | rail（左侧）
     val immersive: Boolean = false,        // 沉浸模式：隐藏导航栏（聊天页全屏）
     val userNick: String = "我",
+    val uiScale: Float = 1.0f,     // v0.4.7 比例缩放：全局字号系数（0.85/1.0/1.15/1.3），平板/高分屏适配
     val aiNick: String = "DevCodex",
     val userAvatar: String = "",           // 头像文件名（filesDir/avatars/）
     val aiAvatar: String = "",

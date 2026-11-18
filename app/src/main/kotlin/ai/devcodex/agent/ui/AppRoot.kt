@@ -139,6 +139,13 @@ fun AppRoot(vm: AppViewModel) {
     // 沉浸模式逃生：一旦当前页不是 chat（如跳设置），立即恢复导航
     val showNav = !(theme.immersive && tabs[tabIdx].route == "chat" && nav.currentDestination?.route == "chat")
 
+    // v0.4.7 比例缩放：全局字号系数（手机小屏 0.85 / 标准 1.0 / 平板 1.15 / 大屏 1.3），dp 不变只缩字体
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    androidx.compose.runtime.CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+            density.density, density.fontScale * (settings.theme.uiScale.takeIf { it in 0.7f..1.6f } ?: 1.0f),
+        ),
+    ) {
     Surface(color = MaterialTheme.colorScheme.background) {
         when {
             // 完整响应式：expanded（≥840dp）自动切左侧常驻 NavigationRail，手动 rail 设置同样生效
@@ -234,5 +241,6 @@ fun AppRoot(vm: AppViewModel) {
                 }
             }
         }
+    }
     }
 }

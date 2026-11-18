@@ -128,10 +128,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // 流式节流：80ms 合并 UI 更新（防 token 级全列表重组 → OOM/卡死闪退）
+    // v0.4.7 修：消息数变化（新消息/新工具结果/轮次收尾）强制立即透传——防尾帧丢在 80ms 窗口内
     @Volatile private var lastUiEmit = 0L
     private fun throttledUpdate(session: ai.devcodex.agent.data.ChatSession, force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (force || now - lastUiEmit > 80) {
+        val msgCountChanged = session.messages.size != _activeSession.value?.messages?.size
+        if (force || msgCountChanged || now - lastUiEmit > 80) {
             lastUiEmit = now
             _activeSession.value = session
         }
@@ -277,6 +279,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         saveSessionBg(merged)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // v0.4.7：取消异常必须重新抛出（吞掉会破坏结构化并发，stop 后协程状态错乱）
+                throw e
             } catch (e: Exception) {
                 // 请求失败明示（不再静默——模型收到失败结果会自主重试造成连环请求）
                 toast.value = "请求失败: " + (e.message ?: "未知错误").take(80)

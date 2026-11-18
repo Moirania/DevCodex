@@ -37,6 +37,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,8 +66,12 @@ fun WorkspaceScreen(vm: AppViewModel) {
     var entries by remember { mutableStateOf(repo.list("")) }
     var preview by remember { mutableStateOf<WorkspaceRepo.Entry?>(null) }
     var refresh by remember { mutableStateOf(0) }
-    // 进入目录后重读
-    androidx.compose.runtime.LaunchedEffect(currentDir, refresh) {
+    // v0.4.7 修"文件消失"：工作区目录切换（settings.workspaceDir）也要触发重读——
+    // 否则设置里换了根目录，本页仍显示旧目录内容，用户以为文件丢了
+    val wsDir by vm.settings.collectAsState(
+        initial = ai.devcodex.agent.data.AppSettings(),
+    )
+    androidx.compose.runtime.LaunchedEffect(currentDir, refresh, wsDir.workspaceDir) {
         entries = repo.list(currentDir)
     }
 
@@ -241,36 +246,64 @@ fun WorkspaceScreen(vm: AppViewModel) {
                             }
                         }
                     } else if (isCode) {
-                        // GitHub Dark 语法高亮（#0D1117 底+GitHub 官方配色）——逐段扫描修全红 bug
-                        Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()).background(androidx.compose.ui.graphics.Color(0xFF0D1117))) {
-                            val kwR = Regex("\\b(fun|val|var|class|object|if|else|for|while|return|import|package|public|private|static|void|def|let|const|struct|fn|match|async|await)\\b")
-                            val strR = Regex("\"[^\"]*\"|'[^']*'")
-                            val cmtR = Regex("//[^\\n]*|/\\*.*?\\*/")
-                            content.lines().take(3000).forEach { line ->
-                                // 收集全部匹配段（range→颜色），按起点排序逐段渲染
-                                data class Span(val start: Int, val end: Int, val color: androidx.compose.ui.graphics.Color, val text: String)
-                                val spans = buildList {
-                                    kwR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFFFF7B72), it.value)) }
-                                    strR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFFA5D6FF), it.value)) }
-                                    cmtR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFF8B949E), it.value)) }
-                                }.sortedBy { it.start }
-                                val annotated = androidx.compose.ui.text.buildAnnotatedString {
-                                    var pos = 0
-                                    for (sp in spans) {
-                                        if (sp.start >= pos && sp.start < line.length) {
-                                            if (sp.start > pos) append(line.substring(pos, sp.start))
-                                            withStyle(androidx.compose.ui.text.SpanStyle(color = sp.color)) { append(sp.text) }
-                                            pos = sp.end + 1
+                        // v0.4.7 AndroidHarness 风格代码预览：行号列 + GitHub 配色 + 语言/行数统计栏
+                        val lang = e.file.extension.lowercase().uppercase().ifBlank { "TEXT" }
+                        val allLines = content.lines()
+                        Column(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth().background(androidx.compose.ui.graphics.Color(0xFF161B22)).padding(horizontal = 10.dp, vertical = 4.dp),
+                                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                            ) {
+                                Text(lang, style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color(0xFF79C0FF), fontFamily = FontFamily.Monospace)
+                                Text("${allLines.size} 行 · ${repo.formatSize(e.size)}", style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color(0xFF8B949E), fontFamily = FontFamily.Monospace)
+                            }
+                            Column(
+                                Modifier.fillMaxWidth().weight(1f, fill = false).verticalScroll(rememberScrollState())
+                                    .background(androidx.compose.ui.graphics.Color(0xFF0D1117)).padding(vertical = 4.dp),
+                            ) {
+                                val kwR = Regex("\\b(fun|val|var|class|object|interface|if|else|for|while|return|import|package|public|private|protected|static|final|void|def|let|const|struct|enum|fn|match|async|await|try|catch|throw|new|extends|implements|with|yield|lambda)\\b")
+                                val numR = Regex("\\b(0x[0-9a-fA-F]+|\\d+\\.?\\d*[fFlLdD]?)\\b")
+                                val boolR = Regex("\\b(true|false|null|None|nil|undefined|this|self|super)\\b")
+                                val strR = Regex("\"[^\"]*\"|'[^']*'|`[^`]*`")
+                                val cmtR = Regex("//.*$|#.*$")
+                                allLines.take(3000).forEachIndexed { ln, line ->
+                                    Row(Modifier.fillMaxWidth()) {
+                                        Text(
+                                            "${ln + 1}",
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = MaterialTheme.typography.bodySmall.fontSize * 0.85f),
+                                            color = androidx.compose.ui.graphics.Color(0xFF484F58),
+                                            modifier = Modifier.width(44.dp).background(androidx.compose.ui.graphics.Color(0xFF010409)).padding(end = 8.dp),
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Right,
+                                        )
+                                        data class Span(val start: Int, val end: Int, val color: androidx.compose.ui.graphics.Color, val text: String)
+                                        val spans = buildList {
+                                            cmtR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFF8B949E), it.value)) }
+                                            strR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFFA5D6FF), it.value)) }
+                                            kwR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFFFF7B72), it.value)) }
+                                            boolR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFF79C0FF), it.value)) }
+                                            numR.findAll(line).forEach { add(Span(it.range.first, it.range.last, androidx.compose.ui.graphics.Color(0xFFD2A8FF), it.value)) }
+                                        }.sortedBy { it.start }
+                                        val annotated = androidx.compose.ui.text.buildAnnotatedString {
+                                            var pos = 0
+                                            for (sp in spans) {
+                                                if (sp.start >= pos && sp.start < line.length) {
+                                                    if (sp.start > pos) append(line.substring(pos, sp.start))
+                                                    withStyle(androidx.compose.ui.text.SpanStyle(color = sp.color)) { append(sp.text) }
+                                                    pos = sp.end + 1
+                                                }
+                                            }
+                                            if (pos < line.length) append(line.substring(pos))
                                         }
+                                        Text(
+                                            if (annotated.isEmpty()) androidx.compose.ui.text.AnnotatedString(" ") else annotated,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = MaterialTheme.typography.bodySmall.fontSize * 0.85f, color = androidx.compose.ui.graphics.Color(0xFFC9D1D9)),
+                                            modifier = Modifier.weight(1f).padding(start = 8.dp),
+                                        )
                                     }
-                                    if (pos < line.length) append(line.substring(pos))
                                 }
-                                Text(
-                                    annotated,
-                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace, fontSize = MaterialTheme.typography.bodySmall.fontSize * 0.85f, color = androidx.compose.ui.graphics.Color(0xFFC9D1D9)),
-                                )
                             }
                         }
+
                     } else if (e.file.extension.lowercase() in listOf("md", "markdown", "txt")) {
                         // Markdown 预览走 M3L（表格/代码/LaTeX 完整渲染）
                         Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {

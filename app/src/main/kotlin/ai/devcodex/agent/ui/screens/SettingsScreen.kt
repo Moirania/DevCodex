@@ -247,6 +247,17 @@ private fun ThemePage(vm: AppViewModel, settings: AppSettings, modifier: Modifie
                 Switch(checked = t.showAvatar, onCheckedChange = { on -> save { it.copy(showAvatar = on) } })
             },
         )
+        // v0.4.7 比例缩放：自适应不同分辨率手机/平板（全局字号系数）
+        Text("界面缩放", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            listOf(0.85f to "小", 1.0f to "标准", 1.15f to "大", 1.3f to "特大").forEach { (scale, label) ->
+                androidx.compose.material3.FilterChip(
+                    selected = t.uiScale == scale,
+                    onClick = { save { it.copy(uiScale = scale) } },
+                    label = { Text(label) },
+                )
+            }
+        }
         var userNick by remember(settings) { mutableStateOf(t.userNick) }
         var aiNick by remember(settings) { mutableStateOf(t.aiNick) }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -1366,7 +1377,12 @@ DevCodex **不收集任何用户数据**。所有会话、角色卡、设置、�
                     ).show()
                 }
             }
-            OutlinedButton(onClick = { exportLauncher.launch("devcodex-debug-" + System.currentTimeMillis() + ".zip") }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) { Icon(Icons.Filled.Feedback, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("导出调试日志（zip）", style = MaterialTheme.typography.labelLarge) }
+            // v0.4.7 导出命名：devcodex_log_设备型号_时间.zip（型号取 Build 去空格，时间 yyyyMMdd-HHmmss）
+            OutlinedButton(onClick = {
+                val model = android.os.Build.MODEL?.replace(Regex("[\\s/]+"), "-")?.take(20)?.ifBlank { "device" } ?: "device"
+                val ts = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+                exportLauncher.launch("devcodex_log_${model}_$ts.zip")
+            }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) { Icon(Icons.Filled.Feedback, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("导出调试日志（zip）", style = MaterialTheme.typography.labelLarge) }
             OutlinedButton(onClick = { openUri("https://github.com/Moirania/DevCodex/issues") }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) { Icon(Icons.Filled.Feedback, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("反馈意见", style = MaterialTheme.typography.labelLarge) }
             var showReward by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
             OutlinedButton(onClick = { showReward = true }, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium) { Icon(Icons.Filled.Favorite, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("微信赞助 / 请喝奶茶", style = MaterialTheme.typography.labelLarge) }

@@ -61,13 +61,23 @@ object BuiltinTools {
         val path = ai.devcodex.agent.util.JsonArg.string(args, "path") ?: return@ToolDef "ERROR: 缺少 path"
         val content = ai.devcodex.agent.util.JsonArg.string(args, "content") ?: ""
         val resolved = resolvePath(path)
-        // 工作区内或沙箱内 → 免审批直写；其他路径走 ShellAccess（需授权/审批）
-        if (resolved.startsWith(appContext.filesDir.canonicalPath)) {
+        // v0.4.7 修"文件消失/无法识别"双根因：
+        // 1) 旧判断 startsWith(filesDir) 在自定义工作区（如 Download）时失效 → 相对路径误走
+        //    ShellAccess 审批；relativeTo(私有workspace) 跨根抛异常。改用 workspaceRoot() 判定
+        // 2) 公共目录写入后 MediaStore 不索引 → 系统文件管理器看不到/无类型图标——写入后触发扫描
+        val wsRoot = workspaceRoot()
+        if (resolved.startsWith(wsRoot.canonicalPath)) {
             runCatching {
                 java.io.File(resolved).parentFile?.mkdirs()
                 java.io.File(resolved).writeText(content)
-            }.fold(onSuccess = { "OK（工作区: ${java.io.File(resolved).relativeTo(java.io.File(appContext.filesDir, "workspace")).path}）" },
-                   onFailure = { "ERROR: ${it.message}" })
+                val sdcard = android.os.Environment.getExternalStorageDirectory().canonicalPath
+                if (resolved.startsWith(sdcard)) {
+                    android.media.MediaScannerConnection.scanFile(appContext, arrayOf(resolved), null, null)
+                }
+            }.fold(onSuccess = {
+                val rel = runCatching { java.io.File(resolved).relativeTo(wsRoot).path }.getOrDefault(resolved)
+                "OK（工作区: $rel）"
+            }, onFailure = { "ERROR: ${it.message}" })
         } else ShellAccess.writeFile(resolved, content)
     }
 

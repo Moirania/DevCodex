@@ -1,6 +1,7 @@
 package ai.devcodex.agent
 
 import android.app.Application
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import ai.devcodex.agent.data.PluginRepo
 import ai.devcodex.agent.data.SessionRepo
@@ -34,6 +35,14 @@ class DevCodexApp : Application() {
         seedPlugins()
         seedSkills()
         // 工作区目录 + AXS 服务同步
+        // v0.4.7 修"文件消失"：collect 是异步的，冷启动窗口期 WorkspaceConfig.dir 为空 →
+        // 工作区漂移到私有目录。先 runBlocking 同步预热（DataStore 首读 ~10ms），再挂异步 collect
+        runCatching {
+            val first = kotlinx.coroutines.runBlocking {
+                kotlinx.coroutines.withTimeoutOrNull(1500) { settingsRepo.settings.first() }
+            }
+            first?.let { ai.devcodex.agent.data.WorkspaceConfig.dir = it.workspaceDir }
+        }
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
             settingsRepo.settings.collect { s ->
                 ai.devcodex.agent.data.WorkspaceConfig.dir = s.workspaceDir

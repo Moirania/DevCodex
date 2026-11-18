@@ -361,6 +361,11 @@ class AgentEngine(
                     inputTokens = inTok, outputTokens = outTok, cachedTokens = cacheTok,
                     firstTokenMs = firstTokMs, totalMs = System.currentTimeMillis() - t0,
                 ) }
+                // v0.4.7 全链路取证：收尾 patch 后的消息字段快照（装机排查"空壳消息"——
+                // turn done 有 thinking/toolCalls 但 UI 全空的最后一块拼图）
+                current.messages.lastOrNull { it.id == assistantId }?.let { m ->
+                    ai.devcodex.agent.util.DebugLog.i("Turn", "settle msg=$assistantId content=${m.content.length}ch thinking=${m.thinking?.length ?: 0}ch tools=${m.toolCalls.size} outTok=${m.outputTokens} msgsInSession=${current.messages.size}")
+                }
                 onUpdate(current)
 
                 // ---- 2. 执行工具 ----
@@ -418,6 +423,15 @@ class AgentEngine(
                     }
                     val toolT0 = System.currentTimeMillis()
                     ai.devcodex.agent.util.DebugLog.i("Tool", "start ${tc.name} id=${tc.id} args=${tc.argsJson.take(300)}")
+                    // v0.4.7 OpenManus 虚拟屏：工具执行实时推送终端活动流（linux_exec 显示完整命令）
+                    runCatching {
+                        val cmdLine = if (tc.name.contains("exec") || tc.name.contains("shell")) {
+                            val c = ai.devcodex.agent.util.JsonArg.string(tc.argsJson, "command")
+                                ?: ai.devcodex.agent.util.JsonArg.string(tc.argsJson, "script") ?: ""
+                            if (c.isNotBlank()) "$ ${c.lineSequence().firstOrNull()?.take(120) ?: ""}" else "\$ ${tc.name}"
+                        } else "\$ ${tc.name} ${tc.argsJson.take(60)}"
+                        ai.devcodex.agent.data.TerminalFeed.push(cmdLine)
+                    }
                     val result = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                         runCatching { def.execute(tc.argsJson) }
                     }
@@ -426,6 +440,7 @@ class AgentEngine(
                             "ERROR: ${it.message}"
                         }
                     ai.devcodex.agent.util.DebugLog.i("Tool", "end ${tc.name} id=${tc.id} cost=${System.currentTimeMillis() - toolT0}ms error=${result.startsWith("ERROR")} resultLen=${result.length} head=${result.take(200)}")
+                    runCatching { ai.devcodex.agent.data.TerminalFeed.pushBlock(result, if (result.startsWith("ERROR")) 6 else 10) }
                     current = current.patch(toolMsgId) {
                         it.copy(toolResult = result, toolStatus = if (result.startsWith("ERROR")) ToolStatus.ERROR else ToolStatus.DONE, toolMs = System.currentTimeMillis() - toolT0)
                     }
