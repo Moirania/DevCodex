@@ -595,6 +595,8 @@ fun ChatScreen(vm: AppViewModel) {
 
                                             }
                                         }
+}
+                                        // v0.4.8 修幽灵消息：工具卡从 content 非空分支移出——content=0ch 的纯工具轮此前整卡被跳过（settle 日志 outTok=39/31 与截图统计条吻合实锤）
                                         msg.toolCalls.forEach { tc ->
                                             val toolMsg = toolResults[tc.id]
                                             ToolCard(
@@ -616,7 +618,6 @@ fun ChatScreen(vm: AppViewModel) {
                                                     onDeny = { vm.respondApproval(granted = false, always = false) },
                                                 )
                                             }
-                                        }
                                         }
                                         MessageStats(msg, session)
                                         // cccodroid：AI 消息底部操作栏（复制/回退/删除）
@@ -662,6 +663,66 @@ fun ChatScreen(vm: AppViewModel) {
                                     Text(desc, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
+                        }
+                    }
+                }
+                // v0.4.8 OpenManus 式主界面终端窗（可折叠）：Agent 工具执行实时流
+                var showMiniTerm by remember { mutableStateOf(false) }
+                val feed by ai.devcodex.agent.data.TerminalFeed.lines.collectAsState()
+                val running = feed.isNotEmpty()
+                if (running || showMiniTerm) {
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 170.dp)
+                            .background(androidx.compose.ui.graphics.Color(0xFF0A0E14))
+                            .clickable { showMiniTerm = !showMiniTerm }
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            ai.devcodex.agent.ui.components.ClaudeSpark(sparkSize = 12.dp, animate = true)
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                if (showMiniTerm) "终端 ▾" else "终端 ▴",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = androidx.compose.ui.graphics.Color(0xFF7EE787),
+                                fontFamily = Mono,
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Text("${feed.size} 行", style = MaterialTheme.typography.labelSmall, color = androidx.compose.ui.graphics.Color(0xFF484F58), fontFamily = Mono)
+                        }
+                        val miniState = androidx.compose.foundation.lazy.rememberLazyListState()
+                        LaunchedEffect(feed.size) {
+                            if (feed.isNotEmpty() && !miniState.isScrollInProgress) miniState.animateScrollToItem((feed.size - 1).coerceAtLeast(0))
+                        }
+                        if (showMiniTerm) {
+                            androidx.compose.foundation.lazy.LazyColumn(
+                                state = miniState,
+                                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 10.dp, vertical = 2.dp),
+                            ) {
+                                items(feed.size) { i ->
+                                    val line = feed[i]
+                                    Text(
+                                        line,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = Mono),
+                                        color = when {
+                                            line.contains("] \$ ") -> androidx.compose.ui.graphics.Color(0xFF7EE787)
+                                            line.contains("ERROR") -> androidx.compose.ui.graphics.Color(0xFFFF7B72)
+                                            else -> androidx.compose.ui.graphics.Color(0xFFC9D1D9)
+                                        },
+                                        maxLines = 3, overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 0.5.dp),
+                                    )
+                                }
+                            }
+                        } else if (feed.isNotEmpty()) {
+                            Text(
+                                feed.last(),
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = Mono),
+                                color = androidx.compose.ui.graphics.Color(0xFF8B949E),
+                                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
                         }
                     }
                 }

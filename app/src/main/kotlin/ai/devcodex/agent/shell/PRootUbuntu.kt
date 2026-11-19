@@ -32,6 +32,49 @@ object PRootUbuntu {
         File(rootfsDir(ctx), ".devcodex_ready").delete()
     }
 
+    /**
+     * chroot 原生执行（v0.4.8，Root 专用）：无 proot 翻译层开销，内核原生执行。
+     * 依赖：ShellAccess ROOT 模式（su 可用）+ ensure 已解压 rootfs。
+     * /dev /proc 挂载失败不阻断（多数命令无 proc 也能跑）。
+     */
+    fun chrootExec(ctx: Context, command: String, timeoutSec: Long = 60): String? {
+        val root = rootfsDir(ctx)
+        if (!root.resolve("bin").exists()) return null  // rootfs 未就绪交给上层降级
+        if (!ensure(ctx)) return null
+        val b = root.absolutePath
+        // 工作区挂进 guest（同名路径，容器内相对路径直接可见）
+        val ws = ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().absolutePath
+        val setup = "mkdir -p $b/root/workspace $b/proc $b/dev $b/sys 2>/dev/null; " +
+            "mountpoint -q $b/proc || mount -t proc proc $b/proc 2>/dev/null; " +
+            "mountpoint -q $b/dev || mount --rbind /dev $b/dev 2>/dev/null; " +
+            "mountpoint -q $b/sys || mount --rbind /sys $b/sys 2>/dev/null; " +
+            "mountpoint -q $b/root/workspace || mount --bind $ws $b/root/workspace 2>/dev/null; true"
+        val inner = "cd /root/workspace 2>/dev/null || cd /root; " + command
+        val full = "$setup; chroot $b /usr/bin/env -i HOME=/root TERM=xterm-256color " +
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin /bin/sh -c " +
+            "'" + inner.replace("'", "'\\''") + "'"
+        // rootExec 同步接口（exec 是 suspend，chrootExec 是普通函数不能调）
+        return runCatching { rootExecViaSu(full) }.getOrNull()?.take(30000)
+    }
+
+    /** su -c 同步执行（chroot 专用，不走 ShellAccess.exec 的挂起链） */
+    private fun rootExecViaSu(cmd: String): String {
+        val p = ProcessBuilder("su", "-c", cmd).redirectErrorStream(true).start()
+        val out = StringBuilder()
+        val t = Thread {
+            try {
+                p.inputStream.bufferedReader().forEachLine { line ->
+                    synchronized(out) { if (out.length < 100_000) out.appendLine(line) }
+                }
+            } catch (_: Throwable) {}
+        }
+        t.isDaemon = true; t.start()
+        val done = p.waitFor(90, java.util.concurrent.TimeUnit.SECONDS)
+        if (!done) { p.destroyForcibly(); return "[chroot] (超时，已终止)" }
+        t.join(500)
+        return out.toString()
+    }
+
     /** 首次解压 proot 二进制 + rootfs（~80MB 解压后），进度回调 0..100 */
     fun ensure(ctx: Context, onProgress: (Int) -> Unit = {}): Boolean {
         if (initialized && rootfsDir(ctx).resolve("bin").exists()) return true

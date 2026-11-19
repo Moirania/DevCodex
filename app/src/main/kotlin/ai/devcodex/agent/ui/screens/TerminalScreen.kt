@@ -153,7 +153,9 @@ fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
                     ai.devcodex.agent.term.canvas.TerminalCanvasView(
                         emulator = emulator,
                         modifier = Modifier.fillMaxSize(),
-                        onResize = { _, _ -> },
+                        // v0.4.8 修终端文字截断：Canvas 已算出真实 cols/rows，此前回调被丢弃——
+                        // 模拟器永远 80 列，超宽行右侧丢失。接上 resize 后按屏宽自适应
+                        onResize = { c, r -> emulator.resize(c, r); rev++ },
                     )
                 }
             }

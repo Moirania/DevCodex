@@ -282,15 +282,44 @@ object TermuxRuntime {
         val ws = ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().absolutePath
         val workDir = if (cwd != null && File(cwd).isDirectory()) cwd else ws
         val wrapped = "cd '$workDir' 2>/dev/null; $command"
+        // v0.4.8 修 Termux APT 编译期硬编码路径：Termux 官方二进制前缀 /data/data/com.termux 是
+        // 编译期写死的（dpkg status db、apt methods 全按它找）——直接跑必挂 "Unable to determine
+        // a suitable packaging system type"。apt/dpkg 系命令套 proot -b 把 guest 路径绑到真前缀
+        // （Operit 同款方案），一次解决 apt/dpkg/pkg 全家
+        val aptLike = Regex("\\b(apt|apt-get|apt-cache|dpkg|pkg)\\b").containsMatchIn(command)
+        var useProotWrap = false
+        if (aptLike) {
+            val prootBin = File(context.filesDir, "proot-bin/proot")
+            if (!prootBin.exists()) {
+                runCatching {
+                    File(context.filesDir, "proot-bin").apply { mkdirs() }
+                    context.assets.open("proot/proot").use { input -> prootBin.outputStream().use { input.copyTo(it) } }
+                    prootBin.setExecutable(true)
+                }
+            }
+            useProotWrap = prootBin.exists()
+            if (!useProotWrap) ai.devcodex.agent.util.DebugLog.w("Termux", "apt 命令但 proot 不可用，直跑（大概率 dpkg 路径错误）")
+        }
         return try {
             // bash 优先（bionic：系统 linker + env；Operit 同款方式）
             val bash = File(usr, "bin/bash")
-            val p = if (!forceBusybox && !bashBlockedByRom && bash.exists() && File(usr, "lib/libreadline.so.8").exists()) {
-                ProcessBuilder(bash.absolutePath, "-c", wrapped)
-            } else {
-                if (!forceBusybox) ai.devcodex.agent.util.DebugLog.w("Termux", "bash skipped (exists=${bash.exists()}, readline=${File(usr, "lib/libreadline.so.8").exists()}), fallback to busybox sh")
-                ProcessBuilder(loader, bb, "sh", "-c", wrapped)
+            val pb = when {
+                useProotWrap -> {
+                    // proot 包装：guest 里 /data/data/com.termux/files/usr → 真 $usr，编译期路径全部自愈
+                    val proot = File(context.filesDir, "proot-bin/proot").absolutePath
+                    val inner = wrapped.replace("'", "'\\''")
+                    ProcessBuilder(loader, bb, "sh", "-c",
+                        proot + " -b " + usr.absolutePath + ":/data/data/com.termux/files/usr -b /dev -b /proc -b " + ws + ":/workspace" +
+                            " -w '" + workDir + "' " + (bash.takeIf { it.exists() }?.absolutePath ?: (bb + " sh")) + " -c '" + inner + "'")
+                }
+                !forceBusybox && !bashBlockedByRom && bash.exists() && File(usr, "lib/libreadline.so.8").exists() ->
+                    ProcessBuilder(bash.absolutePath, "-c", wrapped)
+                else -> {
+                    if (!forceBusybox) ai.devcodex.agent.util.DebugLog.w("Termux", "bash skipped (exists=${bash.exists()}, readline=${File(usr, "lib/libreadline.so.8").exists()}), fallback to busybox sh")
+                    ProcessBuilder(loader, bb, "sh", "-c", wrapped)
+                }
             }
+            val p = pb
                 .redirectErrorStream(true)
                 .apply {
                     val env = environment()

@@ -160,10 +160,19 @@ object ShellAccess {
         true
     } catch (e: Exception) { false }
 
-    /** Linux 沙盒执行（内嵌 Termux 原生 bootstrap，bash/apt 全套） */
+    /** Linux 沙盒执行（v0.4.8 链重构：chroot[Root 原生] → PRoot Ubuntu[自洽 rootfs] → Termux 兜底） */
     fun linuxExec(command: String, cwd: String = "/root"): String {
         val c = ai.devcodex.agent.tools.BuiltinTools.appContext()
-        if (!ai.devcodex.agent.shell.TermuxRuntime.ensure(c)) return "ERROR: Termux 原生引擎未就绪（" + ai.devcodex.agent.shell.TermuxRuntime.lastError + ")"
+        // 根因：旧链只走 Termux——Ubuntu rootfs 从未解压（目录空）+ apt 编译期硬编码
+        // /data/data/com.termux 路径挂掉。PRoot Ubuntu 内的 apt 是 rootfs 自带的，路径天然自洽
+        if (availableMode() == Mode.ROOT) {
+            val r = runCatching { ai.devcodex.agent.shell.PRootUbuntu.chrootExec(c, command) }.getOrNull()
+            if (r != null) return r
+        }
+        if (runCatching { ai.devcodex.agent.shell.PRootUbuntu.ensure(c) }.getOrDefault(false)) {
+            return ai.devcodex.agent.shell.PRootUbuntu.exec(c, command, 120)
+        }
+        if (!ai.devcodex.agent.shell.TermuxRuntime.ensure(c)) return "ERROR: Termux 原生引擎未就绪（" + ai.devcodex.agent.shell.TermuxRuntime.lastError + "）"
         return ai.devcodex.agent.shell.TermuxRuntime.exec(c, command, 30, cwd)
     }
 

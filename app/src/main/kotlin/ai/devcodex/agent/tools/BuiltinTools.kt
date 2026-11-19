@@ -172,7 +172,7 @@ object BuiltinTools {
 
     val linuxExec = ToolDef(
         name = "linux_exec", risk = ToolDef.Risk.HIGH,
-        description = "Termux 原生沙盒执行（busybox sh 完整工具链）。默认工作目录=应用工作区（相对路径直接读写），支持 cwd 指定工作目录",
+        description = "Linux 沙盒执行：Root 设备走 chroot 原生 Ubuntu（零翻译开销）；无 Root 走 PRoot Ubuntu（自带 apt/python 全套，首次初始化约 1-2 分钟）；均不可用时兜底 Termux。默认工作目录=工作区",
         parameters = obj {
             put("type", "object")
             put("properties", obj {
