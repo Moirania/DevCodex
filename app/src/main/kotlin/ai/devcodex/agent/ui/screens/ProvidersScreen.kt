@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
@@ -237,6 +240,8 @@ private fun ProviderEditDialog(
     var type by remember { mutableStateOf(initial.type) }
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
+    // v0.4.10 Key 轮转池（多 key + rpm 限速）
+    var keyPool by remember { mutableStateOf(initial.apiKeys) }
     var models by remember { mutableStateOf(initial.models) }
     var enabledModels by remember { mutableStateOf(initial.enabledModels) }
     var imageModel by remember { mutableStateOf(initial.imageModel) }
@@ -311,6 +316,81 @@ private fun ProviderEditDialog(
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth(),
                         )
+                        // v0.4.10 Key 轮转池：多 key + 每分钟限速（rpm）
+                        Text("Key 轮转池（可选）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                        Text("同一供应商多个 Key 自动轮转：按限速负载均衡，429/超限自动冷却 60s 切换。主 Key 留空时也从池里选。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        keyPool.forEachIndexed { ki, ke ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                                OutlinedTextField(
+                                    value = ke.key, onValueChange = { t ->
+                                        keyPool = keyPool.toMutableList().also { it[ki] = it[ki].copy(key = t) }
+                                    },
+                                    placeholder = { Text("Key ${ki + 1}（sk-…）") },
+                                    singleLine = true,
+                                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                OutlinedTextField(
+                                    value = if (ke.rpm > 0) ke.rpm.toString() else "",
+                                    onValueChange = { t ->
+                                        keyPool = keyPool.toMutableList().also { it[ki] = it[ki].copy(rpm = t.toIntOrNull() ?: 0) }
+                                    },
+                                    placeholder = { Text("限速/分") },
+                                    singleLine = true,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                                    modifier = Modifier.width(86.dp),
+                                )
+                                androidx.compose.material3.IconButton(onClick = { keyPool = keyPool.toMutableList().also { it.removeAt(ki) } }) {
+                                    Icon(Icons.Filled.Delete, "删除", Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                        androidx.compose.material3.TextButton(onClick = { keyPool = keyPool + ai.devcodex.agent.data.KeyEntry("") }) {
+                            Icon(Icons.Filled.Add, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("添加 Key")
+                        }
+                        if (keyPool.isNotEmpty()) {
+                            val snap = ai.devcodex.agent.data.KeyRotator.snapshot(initial.copy(apiKeys = keyPool))
+                            snap.forEach { (ke, st) ->
+                                if (ke.key.isNotBlank()) Text("· ${ke.key.take(10)}… : $st", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                            }
+                            // v0.4.10 并发测试：5 路同时打一轮选 key（验证轮转/限速真实行为）
+                            var concTesting by remember { mutableStateOf(false) }
+                            var concResult by remember { mutableStateOf<String?>(null) }
+                            androidx.compose.material3.OutlinedButton(
+                                onClick = {
+                                    concTesting = true; concResult = null
+                                    val cfg = initial.copy(type = type, baseUrl = baseUrl, apiKey = apiKey, apiKeys = keyPool.filter { it.key.isNotBlank() })
+                                    scope.launch {
+                                        val t0 = System.currentTimeMillis()
+                                        val results = (1..5).map { i ->
+                                            async(Dispatchers.IO) {
+                                                val key = ai.devcodex.agent.data.KeyRotator.acquire(cfg)
+                                                val kt0 = System.currentTimeMillis()
+                                                val r = runCatching { ProviderGateway.testModel(cfg, cfg.enabledModels.firstOrNull() ?: "gpt-3.5-turbo") }
+                                                    .getOrElse { ModelTestResult(error = it.describe()) }
+                                                "${key.take(8)}… ${if (r.error == null) "✓" else "✗"}${r.latencyMs}ms"
+                                            }
+                                        }.awaitAll()
+                                        concResult = "并发 5 路 ${System.currentTimeMillis() - t0}ms 总耗时\n" + results.joinToString("\n") { "· $it" } +
+                                            "\n当前池状态：\n" + ai.devcodex.agent.data.KeyRotator.snapshot(cfg).joinToString("\n") { (ke, st) -> "· ${ke.key.take(8)}…: $st" }
+                                        concTesting = false
+                                    }
+                                },
+                                enabled = !concTesting,
+                            ) {
+                                if (concTesting) CircularProgressIndicator(Modifier.size(14.dp))
+                                else Icon(Icons.Filled.Speed, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("并发测试（5 路轮转）", style = MaterialTheme.typography.labelMedium)
+                            }
+                            concResult?.let {
+                                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                                    Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp))
+                                }
+                            }
+                        }
                         Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = baseUrl, onValueChange = { baseUrl = it },
@@ -517,7 +597,7 @@ private fun ProviderEditDialog(
                         val cleaned = normalizeBaseUrl(baseUrl)
                         onSave(initial.copy(
                             name = name.ifBlank { hostOf(cleaned) }, type = type, baseUrl = cleaned,
-                            apiKey = apiKey, models = models, enabledModels = enabledModels,
+                            apiKey = apiKey, apiKeys = keyPool.filter { it.key.isNotBlank() }, models = models, enabledModels = enabledModels,
                             imageModel = imageModel.trim(), videoModel = videoModel.trim(),
                             imageEndpoint = imageEndpoint.trim(), videoSubmitUrl = videoSubmitUrl.trim(), videoStatusUrl = videoStatusUrl.trim(),
                             videoTaskIdPath = videoTaskIdPath.trim().ifBlank { "id" },

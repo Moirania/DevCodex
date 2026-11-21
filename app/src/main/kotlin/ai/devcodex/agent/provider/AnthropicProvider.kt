@@ -105,7 +105,7 @@ object AnthropicProvider {
         }
         return Request.Builder()
             .url("${p.endpoint()}/v1/messages")
-            .addHeader("x-api-key", p.apiKey)
+            .addHeader("x-api-key", ai.devcodex.agent.data.KeyRotator.acquire(p))
             .addHeader("anthropic-version", "2023-06-01")
             .addHeader("Content-Type", "application/json")
             .post(jsonBody(body))
@@ -152,7 +152,7 @@ object AnthropicProvider {
     suspend fun listModels(p: ProviderConfig): List<String> {
         val req = Request.Builder()
             .url("${p.endpoint()}/v1/models?limit=200")
-            .addHeader("x-api-key", p.apiKey)
+            .addHeader("x-api-key", ai.devcodex.agent.data.KeyRotator.acquire(p))
             .addHeader("anthropic-version", "2023-06-01")
             .get().build()
         TestClient.newCall(req).await().use { resp ->

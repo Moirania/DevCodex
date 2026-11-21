@@ -64,7 +64,7 @@ object OpenAiCompatProvider {
         }
         return Request.Builder()
             .url("${p.endpoint()}/chat/completions")
-            .addHeader("Authorization", "Bearer ${p.apiKey}")
+            .addHeader("Authorization", "Bearer ${ai.devcodex.agent.data.KeyRotator.acquire(p)}")
             .addHeader("Content-Type", "application/json")
             .post(jsonBody(body))
             .build()
@@ -114,7 +114,7 @@ object OpenAiCompatProvider {
     suspend fun listModels(p: ProviderConfig): List<String> {
         val req = Request.Builder()
             .url("${p.endpoint()}/models")
-            .addHeader("Authorization", "Bearer ${p.apiKey}")
+            .addHeader("Authorization", "Bearer ${ai.devcodex.agent.data.KeyRotator.acquire(p)}")
             .get().build()
         TestClient.newCall(req).await().use { resp ->
             if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")

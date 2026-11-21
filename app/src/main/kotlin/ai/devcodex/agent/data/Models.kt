@@ -6,6 +6,14 @@ import kotlinx.serialization.Serializable
 // ============ 提供商 ============
 enum class ProviderType { OPENAI_COMPAT, ANTHROPIC, OLLAMA }
 
+/** v0.4.10 轮转池里的单个 Key：限速（次/分钟，0=不限）由用户配置 */
+@Serializable
+data class KeyEntry(
+    val key: String,
+    val label: String = "",        // 备注名（如"小号1"）
+    val rpm: Int = 0,              // 每分钟限速（0=不限）
+)
+
 @Serializable
 data class ProviderConfig(
     val id: String,
@@ -13,6 +21,8 @@ data class ProviderConfig(
     val type: ProviderType = ProviderType.OPENAI_COMPAT,
     val baseUrl: String = "",
     val apiKey: String = "",
+    // v0.4.10 Key 轮转池：同一供应商多个 key 自动轮转（429/超限自动冷却切换）
+    val apiKeys: List<KeyEntry> = emptyList(),
     val models: List<String> = emptyList(),
     val enabledModels: List<String> = emptyList(),
     val enabled: Boolean = true,

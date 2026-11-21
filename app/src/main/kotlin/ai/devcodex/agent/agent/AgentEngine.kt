@@ -307,6 +307,11 @@ class AgentEngine(
                     if (err is CancellationException) throw err
                     val msg = err.message ?: err.toString()
                     ai.devcodex.agent.util.DebugLog.w("Agent", "request failed attempt=${attempt + 1} model=$model toolsDropped=$toolsDropped: $msg", err)
+                    // v0.4.10 Key 轮转：429/超限 → 当前 key 冷却 60s，下次请求自动换 key 重发
+                    if (msg.contains("HTTP 429") || msg.contains("rate") || msg.contains("Too Many", ignoreCase = true)) {
+                        ai.devcodex.agent.data.KeyRotator.reportLimit(provider, ai.devcodex.agent.data.KeyRotator.lastKey(provider))
+                        ai.devcodex.agent.util.DebugLog.i("Agent", "rate limited — key cooled, rotating")
+                    }
                     // 丢弃半截流式缓冲，避免重试后内容重复
                     text.clear(); think.clear(); toolAgg.clear()
                     current = current.patch(assistantId) { it.copy(content = "", thinking = null, thinkingSignature = null, toolCalls = emptyList()) }
