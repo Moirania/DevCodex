@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,6 +51,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import ai.devcodex.agent.AppViewModel
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 
@@ -59,15 +63,100 @@ fun PluginsScreen(vm: AppViewModel) {
     var showInstall by remember { mutableStateOf(false) }
     var showGuide by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<ai.devcodex.agent.data.PluginManifest?>(null) }
+    // v0.4.9 插件市场：GitHub marketplace.json 索引 + 一键安装
+    var tab by remember { mutableStateOf(0) }
+    data class MarketItem(val id: String, val name: String, val desc: String, val author: String, val version: String, val manifestText: String)
+    var marketItems by remember { mutableStateOf<List<MarketItem>>(emptyList()) }
+    var marketLoading by remember { mutableStateOf(false) }
+    var marketErr by remember { mutableStateOf<String?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
+    fun loadMarket() {
+        marketLoading = true; marketErr = null
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val conn = java.net.URL("https://raw.githubusercontent.com/Moirania/DevCodex/main/marketplace.json")
+                    .openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 10000; conn.readTimeout = 15000
+                val txt = conn.inputStream.bufferedReader().use { it.readText() }
+                conn.disconnect()
+                val arr = kotlinx.serialization.json.Json.parseToJsonElement(txt)
+                    .let { it as kotlinx.serialization.json.JsonObject }["items"] as kotlinx.serialization.json.JsonArray
+                arr.map { e ->
+                    val o = e as kotlinx.serialization.json.JsonObject
+                    fun s(k: String) = o[k]?.let { (it as kotlinx.serialization.json.JsonPrimitive).content } ?: ""
+                    MarketItem(s("id"), s("name"), s("desc"), s("author"), s("version"), s("manifestText"))
+                }
+            }.fold(onSuccess = { marketItems = it }, onFailure = { marketErr = it.message })
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { marketLoading = false }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(tab) { if (tab == 1 && marketItems.isEmpty() && !marketLoading) loadMarket() }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("插件") }) },
         floatingActionButton = {
-            FloatingActionButton(onClick = { showInstall = true }) {
+            if (tab == 0) FloatingActionButton(onClick = { showInstall = true }) {
                 Icon(Icons.Filled.Extension, "安装插件")
             }
         },
     ) { padding ->
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                androidx.compose.material3.FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("已安装 (${plugins.size})") })
+                androidx.compose.material3.FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("插件市场") })
+            }
+            if (tab == 1) {
+                when {
+                    marketLoading -> Box(Modifier.fillMaxSize()) {
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    }
+                    marketErr != null -> Column(Modifier.fillMaxSize().padding(24.dp)) {
+                        Text("市场加载失败：${marketErr?.take(80)}", color = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.padding(8.dp))
+                        Button(onClick = { loadMarket() }) { Text("重试") }
+                    }
+                    else -> LazyColumn(
+                        Modifier.fillMaxSize(),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(marketItems, key = { it.id }) { m ->
+                            val installed = plugins.any { it.id == m.id }
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (installed) MaterialTheme.colorScheme.surfaceContainerLowest
+                                    else MaterialTheme.colorScheme.secondaryContainer,
+                                ),
+                                shape = RoundedCornerShape(16.dp),
+                            ) {
+                                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Filled.Extension, null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.primary)
+                                        Spacer(Modifier.padding(8.dp))
+                                        Text(m.name, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                                        Text("v${m.version}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    if (m.desc.isNotBlank()) Text(m.desc, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                                    Text(m.author, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+                                    if (!installed) Button(
+                                        onClick = {
+                                            vm.pluginRepo.installFromText(m.manifestText).fold(
+                                                onSuccess = { vm.toast.value = "已安装 ${it.name}" },
+                                                onFailure = { vm.toast.value = "安装失败：${it.message?.take(60)}" },
+                                            )
+                                        },
+                                        modifier = Modifier.padding(top = 8.dp),
+                                    ) { Text("安装") }
+                                    else Text("✓ 已安装", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+                                }
+                            }
+                        }
+                        item { Text("市场源：Moirania/DevCodex marketplace.json · 欢迎提 PR 上架插件", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                }
+                Spacer(Modifier.fillMaxSize())
+            } else Box(Modifier.fillMaxSize()) {
         // 开发文档大入口（首屏第一项）
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -143,10 +232,11 @@ fun PluginsScreen(vm: AppViewModel) {
                             },
                         )
                     }
-                }
-            }
-        }
-    }
+                    }
+                }   // /else 空态/列表
+            }   // /Box 本地内容
+        }       // /Column Tab容器
+    }           // /Scaffold
 
     if (showInstall) {
         InstallPluginDialog(vm) { showInstall = false }
@@ -182,6 +272,7 @@ fun PluginsScreen(vm: AppViewModel) {
             dismissButton = { TextButton(onClick = { detail = null }) { Text("关闭") } },
         )
     }
+}
 }
 
 @Composable

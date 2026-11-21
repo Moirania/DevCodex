@@ -26,7 +26,7 @@ val ProviderPresets = listOf(
     ProviderPreset("腾讯混元", "https://api.hunyuan.cloud.tencent.com/v1", ProviderType.OPENAI_COMPAT, "Hunyuan 系列"),
     ProviderPreset("xAI Grok", "https://api.x.ai/v1", ProviderType.OPENAI_COMPAT, "Grok 系列"),
     ProviderPreset("美团 LongCat", "https://api.longcat.chat/openai", ProviderType.OPENAI_COMPAT, "LongCat 系列"),
-    ProviderPreset("agnes-ai", "https://api.agnes-ai.com/v1", ProviderType.OPENAI_COMPAT, "Agnes 系列"),
+    ProviderPreset("agnes-ai", "https://apihub.agnes-ai.com/v1", ProviderType.OPENAI_COMPAT, "Agnes 系列"),
     ProviderPreset("百度千帆", "https://qianfan.baidubce.com/v2", ProviderType.OPENAI_COMPAT, "文心/千帆 v2"),
     ProviderPreset("Ollama 本地", "http://127.0.0.1:11434", ProviderType.OLLAMA, "本机/局域网"),
     ProviderPreset("LM Studio 本地", "http://127.0.0.1:1234/v1", ProviderType.OPENAI_COMPAT, "桌面端本地模型"),

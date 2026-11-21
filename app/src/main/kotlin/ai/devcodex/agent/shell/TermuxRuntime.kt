@@ -274,6 +274,24 @@ object TermuxRuntime {
     @Volatile private var bashBlockedByRom = false
 
     /** 执行（busybox ash 为主 shell）；forceBusybox=true 跳过 bash 通道（失败自动回退时用） */
+    /** v0.4.9 proot 可用性探测（进程级缓存）：真跑 proot 挂 termux 前缀执行 true，
+     *  exit 0=可用；159(SIGSYS)/139(SIGSEGV)=ROM 禁 ptrace。--version 不触发 ptrace 测不出 */
+    @Volatile private var prootOk: Boolean? = null
+    private fun prootUsable(context: Context): Boolean {
+        prootOk?.let { return it }
+        val ok = runCatching {
+            val usr = prefix(context)
+            val proot = File(context.filesDir, "proot-bin/proot").absolutePath
+            val libs = File(context.filesDir, "proot-bin").absolutePath + ":" + File(usr, "lib").absolutePath
+            val p = ProcessBuilder(proot, "-r", usr.absolutePath, "-b", "/dev", "-b", "/proc", "-b", "/system", "/usr/bin/true")
+                .redirectErrorStream(true).apply { environment()["LD_LIBRARY_PATH"] = libs }.start()
+            p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
+        }.getOrDefault(false)
+        prootOk = ok
+        ai.devcodex.agent.util.DebugLog.i("Termux", "proot probe: ${if (ok) "OK" else "BLOCKED (ROM 禁 ptrace?)"}")
+        return ok
+    }
+
     fun exec(context: Context, command: String, timeoutSec: Long = 30, cwd: String? = null, forceBusybox: Boolean = false): String {
         if (!ensure(context)) return "ERROR(termux): 引擎未就绪（$lastError）"
         val usr = prefix(context)
@@ -297,8 +315,10 @@ object TermuxRuntime {
                     prootBin.setExecutable(true)
                 }
             }
-            useProotWrap = prootBin.exists()
-            if (!useProotWrap) ai.devcodex.agent.util.DebugLog.w("Termux", "apt 命令但 proot 不可用，直跑（大概率 dpkg 路径错误）")
+            // v0.4.9：proot 二进制存在 ≠ 可用——vivo 类 ROM seccomp 禁 ptrace，proot 被 SIGSYS 杀
+            // （装机实锤 exit=159）。真跑一次探测（进程级缓存），失败则不包装（直跑虽败但错误可读）
+            useProotWrap = prootBin.exists() && prootUsable(context)
+            if (!useProotWrap) ai.devcodex.agent.util.DebugLog.w("Termux", "apt 命令但 proot 不可用（二进制缺失或 ROM 禁 ptrace），直跑")
         }
         return try {
             // bash 优先（bionic：系统 linker + env；Operit 同款方式）

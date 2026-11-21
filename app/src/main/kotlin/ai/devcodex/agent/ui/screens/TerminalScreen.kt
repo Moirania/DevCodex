@@ -26,7 +26,7 @@ import java.io.File
 @Composable
 fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
     // v0.4.7 双 Tab：Agent 活动（OpenManus 风格实时输出流）/ 手动终端（VT 模拟器）
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember { mutableStateOf(1) }  // v0.4.9 默认手动终端（直接操作沙箱）
     val feed by ai.devcodex.agent.data.TerminalFeed.lines.collectAsState()
 
     val emulator = remember { ai.devcodex.agent.term.emulator.TerminalEmulator(cols = 80, rows = 24) }
@@ -38,14 +38,20 @@ fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
     val scope = rememberCoroutineScope()
 
     fun banner(ctx: android.content.Context) {
-        val green = "\u001B[32m"; val yellow = "\u001B[33m"; val reset = "\u001B[0m"; val grey = "\u001B[90m"
-        val nativeTermux = runCatching { ai.devcodex.agent.shell.TermuxRuntime.ensure(ctx) }.getOrDefault(false)
-        val status = if (nativeTermux) {
-            green + "Termux 原生引擎就绪（bash / apt 可用）" + reset
-        } else {
-            yellow + "Termux 引擎: " + ai.devcodex.agent.shell.TermuxRuntime.lastError.ifBlank { "初始化中…" } + reset
-        }
-        emulator.feed(("DevCodex VT 终端（OpenMinis 内核）\r\n" + status + "\r\n通道: Termux 原生 / Shizuku / Root\r\n" + grey + "↑↓ 历史 · 回车执行" + reset + "\r\n$ ").toByteArray())
+        val green = "\u001B[32m"; val yellow = "\u001B[33m"; val reset = "\u001B[0m"; val grey = "\u001B[90m"; val cyan = "\u001B[36m"
+        // v0.4.9 OpenMinis 式环境探测：逐级显示沙箱真实状态
+        val root = ai.devcodex.agent.shell.PRootUbuntu.rootfsDir(ctx)
+        val rootfsReady = root.resolve("bin").exists()
+        val (ubOk, ubReason) = ai.devcodex.agent.shell.PRootUbuntu.status(ctx)
+        val termuxOk = runCatching { ai.devcodex.agent.shell.TermuxRuntime.ensure(ctx) }.getOrDefault(false)
+        val sb = StringBuilder("DevCodex 可视化终端\r\n")
+        sb.appendLine(cyan + "环境链: " + reset +
+            (if (rootfsReady && ubOk) green + "Ubuntu(PRoot) 就绪" else if (rootfsReady) yellow + "rootfs 已解压·ptrace 待验证" else grey + "Ubuntu 未初始化") + reset + " → " +
+            (if (termuxOk) green + "Termux" + reset else yellow + "Termux:" + ai.devcodex.agent.shell.TermuxRuntime.lastError.take(30) + reset))
+        if (!ubOk && ubReason != null) sb.appendLine(yellow + ubReason.take(80) + reset)
+        sb.appendLine(grey + "输入命令直接操作沙箱（chroot→PRoot Ubuntu→Termux 自动选路）· ↑↓ 历史" + reset)
+        sb.append("$ ")
+        emulator.feed(sb.toString().toByteArray())
         rev++
     }
     val ctx = androidx.compose.ui.platform.LocalContext.current
@@ -56,7 +62,10 @@ fun TerminalScreen(vm: ai.devcodex.agent.AppViewModel) {
         busy = true
         emulator.feed("\r\n".toByteArray()); rev++
         scope.launch(Dispatchers.IO) {
-            val out = ai.devcodex.agent.shell.ShellAccess.exec(c)
+            // v0.4.9：终端直操沙箱——与 Agent 的 linux_exec 同链（chroot→PRoot Ubuntu→Termux），
+            // 不再走 ShellAccess.exec 的 Shizuku/Root 通道
+            val out = runCatching { ai.devcodex.agent.shell.ShellAccess.linuxExec(c) }
+                .getOrElse { "ERROR: ${it.message}" }
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 emulator.feed(out.toByteArray())
                 emulator.feed("\r\n$ ".toByteArray())

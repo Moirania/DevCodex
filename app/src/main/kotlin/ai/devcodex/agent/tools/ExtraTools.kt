@@ -552,11 +552,20 @@ object ExtraTools {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val c = ctx()
-                val r = runCatching {
+                var r = runCatching {
                     if (ai.devcodex.agent.shell.PRootUbuntu.ensure(c)) ai.devcodex.agent.shell.PRootUbuntu.exec(c, installCmd, 600)
                     else ai.devcodex.agent.shell.TermuxRuntime.exec(c, installCmd, 600)
                 }.getOrDefault("ERROR: 安装协程异常")
                 ai.devcodex.agent.util.DebugLog.i("SandboxInstall", "$bin => ${r.take(300)}")
+                // v0.4.9 静态兜底：apt 三路全灭（seccomp 杀 proot / dpkg 路径错）时，python3 下载
+                // musl 静态版（astral python-build-standalone，零依赖原生执行，Android 内核直跑）
+                val aptBlocked = r.contains("ERROR") || r.contains("Unable to determine") || r.contains("seccomp")
+                if (aptBlocked && bin == "python3" && !ai.devcodex.agent.tools.StaticToolchain.isPythonReady(c)) {
+                    ai.devcodex.agent.util.DebugLog.i("SandboxInstall", "apt blocked, falling back to static python")
+                    val ok = ai.devcodex.agent.tools.StaticToolchain.ensurePython(c) { }
+                    r = if (ok) "OK(static python3)" else "ERROR: 静态 Python 安装失败（网络或存储）"
+                    ai.devcodex.agent.util.DebugLog.i("SandboxInstall", "$bin static => ${r.take(200)}")
+                }
             } finally { sandboxInstalling[bin] = false }
         }
         return "$bin 首次安装已转后台（约 1-3 分钟，官方源）。请稍等 1-3 分钟后重新运行刚才的工具；若多次仍提示未安装，向用户说明并请其检查网络后重试"
@@ -578,12 +587,16 @@ object ExtraTools {
         val code = JsonArg.string(args, "code") ?: return@ToolDef "ERROR: 缺少 code"
         val script = java.io.File(ctx().cacheDir, "devcodex_py.py")
         script.writeText(code)
+        val staticPy = ai.devcodex.agent.tools.StaticToolchain.pythonBin(ctx())
+        val runner = if (staticPy.isFile) staticPy.absolutePath else "python3"
+        if (!staticPy.isFile) {
         val hasPy = ShellAccess.execSandbox("command -v python3")
         if (!hasPy.contains("python3")) {
             val state = sandboxInstall("python3", "DEBIAN_FRONTEND=noninteractive apt-get update 2>&1 | tail -1 && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 2>&1 | tail -2 || pkg install -y python 2>&1 | tail -2")
             if (state != null) return@ToolDef state
         }
-        ShellAccess.execSandbox("python3 ${script.absolutePath} 2>&1").take(20000)
+        }
+        ShellAccess.execSandbox("$runner ${script.absolutePath} 2>&1").take(20000)
     }
 
     val nodeRun = ToolDef(

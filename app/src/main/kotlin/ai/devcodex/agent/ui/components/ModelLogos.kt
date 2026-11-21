@@ -50,9 +50,9 @@ object ModelLogos {
         model.hasWord("perplexity") -> R.drawable.nm_perplexity
         model.hasWord("cohere") || model.hasWord("command") -> R.drawable.nm_cohere
         model.hasWord("yi") || model.hasWord("01ai") -> R.drawable.nm_yi
-        model.hasWord("hunyuan") -> R.drawable.nm_hunyuan
+        model.hasWord("hunyuan") || model.hasWord("tencent") || model.contains("混元") || model.contains("腾讯") -> R.drawable.nm_hunyuan
         model.hasWord("spark") || model.contains("星火") -> R.drawable.nm_spark
-        model.hasWord("wenxin") || model.contains("文心") -> R.drawable.nm_zhipu
+        model.hasWord("wenxin") || model.hasWord("ernie") || model.contains("文心") || model.contains("千帆") || model.contains("百度") -> R.drawable.nm_robot
         model.hasWord("copilot") -> R.drawable.nm_copilot
         model.hasWord("groq") -> R.drawable.nm_groq
         model.hasWord("together") -> R.drawable.nm_together

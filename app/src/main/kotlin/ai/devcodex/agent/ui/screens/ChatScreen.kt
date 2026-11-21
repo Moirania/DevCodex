@@ -186,6 +186,16 @@ fun ChatScreen(vm: AppViewModel) {
             runCatching { listState.animateScrollToItem(messages.lastIndex) }
         }
     }
+    // v0.4.9 QQ/微信式输入法定位：键盘弹出时消息自动滚到最新（键盘收起不回弹）
+    val view = androidx.compose.ui.platform.LocalView.current
+    val imeBottom = androidx.core.view.ViewCompat.getRootWindowInsets(view)
+        ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())?.bottom ?: 0
+    LaunchedEffect(imeBottom, messages.size) {
+        if (imeBottom > 0 && messages.isNotEmpty()) {
+            kotlinx.coroutines.delay(80)  // 等 imePadding 布局完成再滚，防滚过头
+            runCatching { listState.animateScrollToItem(messages.lastIndex) }
+        }
+    }
     // 工具结果映射：toolCallId -> tool 消息（内联渲染用）
     val toolResults = remember(messages) {
         messages.filter { it.role == "tool" && it.toolCallId != null }.associateBy { it.toolCallId!! }
