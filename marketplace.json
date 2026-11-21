@@ -1,0 +1,29 @@
+{
+ "updated": "2026-11-21",
+ "items": [
+  {
+   "id": "builtin-exchange-rate",
+   "name": "汇率换算",
+   "desc": "查询货币汇率并换算（open.er-api.com 免费服务，无需 API Key）",
+   "author": "DevCodex 官方",
+   "version": "1.0",
+   "manifestText": "{\"id\": \"builtin-exchange-rate\", \"name\": \"汇率换算\", \"version\": \"1.0.0\", \"author\": \"DevCodex 内置\", \"description\": \"查询货币汇率并换算（open.er-api.com 免费服务，无需 API Key）\", \"enabled\": true, \"tools\": [{\"name\": \"exchange_rate\", \"description\": \"查询两种货币之间的汇率。如 100 USD 兑换多少 CNY\", \"parameters\": \"{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"from\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"源货币代码，如 USD\\\"},\\\"to\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"目标货币代码，如 CNY\\\"},\\\"amount\\\":{\\\"type\\\":\\\"number\\\",\\\"description\\\":\\\"金额，默认 1\\\"}},\\\"required\\\":[\\\"from\\\",\\\"to\\\"]}\", \"endpoint\": {\"method\": \"GET\", \"url\": \"https://open.er-api.com/v6/latest/{{from}}\", \"headers\": {}, \"bodyTemplate\": null, \"resultPath\": \"rates\"}}]}"
+  },
+  {
+   "id": "builtin-ip-info",
+   "name": "IP 归属地查询",
+   "desc": "查询 IP 地址的归属地与运营商信息（ip-api.com 免费服务）",
+   "author": "DevCodex 官方",
+   "version": "1.0",
+   "manifestText": "{\"id\": \"builtin-ip-info\", \"name\": \"IP 归属地查询\", \"version\": \"1.0.0\", \"author\": \"DevCodex 内置\", \"description\": \"查询 IP 地址的归属地与运营商信息（ip-api.com 免费服务）\", \"enabled\": true, \"tools\": [{\"name\": \"ip_lookup\", \"description\": \"查询 IP 归属地（国家/省/市/ISP）。留空 ip 则查当前出口 IP\", \"parameters\": \"{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"ip\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"要查的 IP，留空查本机出口\\\"}}}\", \"endpoint\": {\"method\": \"GET\", \"url\": \"http://ip-api.com/json/{{ip}}?lang=zh-CN\", \"headers\": {}, \"bodyTemplate\": null, \"resultPath\": null}}]}"
+  },
+  {
+   "id": "builtin-weather",
+   "name": "天气查询",
+   "desc": "查询指定城市的天气（wttr.in 免费服务，无需 API Key）",
+   "author": "DevCodex 官方",
+   "version": "1.0",
+   "manifestText": "{\"id\": \"builtin-weather\", \"name\": \"天气查询\", \"version\": \"1.0.0\", \"author\": \"DevCodex 内置\", \"description\": \"查询指定城市的天气（wttr.in 免费服务，无需 API Key）\", \"enabled\": true, \"tools\": [{\"name\": \"weather_query\", \"description\": \"查询城市当前天气。返回温度/体感/湿度/风速/天气描述\", \"parameters\": \"{\\\"type\\\":\\\"object\\\",\\\"properties\\\":{\\\"city\\\":{\\\"type\\\":\\\"string\\\",\\\"description\\\":\\\"城市名，如 Beijing 或 上海\\\"}},\\\"required\\\":[\\\"city\\\"]}\", \"endpoint\": {\"method\": \"GET\", \"url\": \"https://wttr.in/{{city}}?format=j1\", \"headers\": {\"User-Agent\": \"curl/8.0\"}, \"bodyTemplate\": null, \"resultPath\": \"current_condition.0\"}}]}"
+  }
+ ]
+}
