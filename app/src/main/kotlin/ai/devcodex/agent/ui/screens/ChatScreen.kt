@@ -1281,13 +1281,24 @@ private fun ThinkingBlockInline(text: String, autoCollapse: Boolean = true, thin
                             .background(flowBrush, RoundedCornerShape(2.dp))
                     )
                     Spacer(Modifier.width(8.dp))
-                    // 思考内容 M3L 富渲染（代码/LaTeX/表格）
+                    // v0.4.11 性能修复：思考流式期间禁用 M3L 富渲染——16 万字符思考 × 90ms 轮询
+                    // 全量重分段 = 主线程卡死（装机日志实锤 thinking=161825ch）。
+                    // 流式时纯 Text（含代码也按原文显示），完成后切 M3L 富渲染
                     Column(Modifier.weight(1f).heightIn(max = 360.dp).verticalScroll(thinkScroll)) {
-                        ai.devcodex.agent.m3l.MixedMarkdownLatex(
-                            text = text,
-                            textColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                            isStreaming = streaming,
-                        )
+                        val shown = if (text.length > 50_000) text.takeLast(50_000).let { "…（前 ${text.length - 50_000} 字已省略）\n\n" + it } else text
+                        if (streaming) {
+                            Text(
+                                shown,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        } else {
+                            ai.devcodex.agent.m3l.MixedMarkdownLatex(
+                                text = shown,
+                                textColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                isStreaming = false,
+                            )
+                        }
                     }
                 }
             }

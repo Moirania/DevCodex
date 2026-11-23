@@ -413,6 +413,51 @@ internal object CodeThemeHolder {
 
 
 /** 深色调色板按主题字符串（非 Composable：协程高亮里用） */
+/** v0.4.11 浅色版代码主题：修"浅色模式下 codeTheme 选择不生效"——9 主题全部提供浅色配色 */
+internal fun lightPaletteForTheme(theme: String): CodeBlockPalette = when (theme) {
+    "dracula" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFFDF6F3), text = Color(0xFF44475A),
+        keyword = Color(0xFF7C3AED), string = Color(0xFFB8860B), number = Color(0xFF8250DF),
+        comment = Color(0xFF9497AE), type = Color(0xFFB45309),
+    )
+    "onedark" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFFAFAFA), text = Color(0xFF383A42),
+        keyword = Color(0xFFA626A4), string = Color(0xFF50A14F), number = Color(0xFF986801),
+        comment = Color(0xFFA0A1A7), type = Color(0xFFC18401),
+    )
+    "solar" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFFDF6E3), text = Color(0xFF657B83),
+        keyword = Color(0xFF859900), string = Color(0xFF2AA198), number = Color(0xFFD33682),
+        comment = Color(0xFF93A1A1), type = Color(0xFFB58900),
+    )
+    "monokai" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFFAFAF2), text = Color(0xFF3B3A35),
+        keyword = Color(0xFFF92672), string = Color(0xFF497D14), number = Color(0xFF7A3EC8),
+        comment = Color(0xFF9E987F), type = Color(0xFF0F7D8C),
+    )
+    "nord" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFF2F4F8), text = Color(0xFF2E3440),
+        keyword = Color(0xFF5E81AC), string = Color(0xFF7EA15C), number = Color(0xFF9C6B96),
+        comment = Color(0xFF7B88A1), type = Color(0xFF4C7A89),
+    )
+    "gruvbox" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFFBF1C7), text = Color(0xFF3C3836),
+        keyword = Color(0xFF9D0006), string = Color(0xFF797403), number = Color(0xFF8F3F71),
+        comment = Color(0xFF928374), type = Color(0xFFB57614),
+    )
+    "vscode" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFF8F8F8), text = Color(0xFF333333),
+        keyword = Color(0xFF0000FF), string = Color(0xFFA31515), number = Color(0xFF098658),
+        comment = Color(0xFF008000), type = Color(0xFF267F99),
+    )
+    "highcontrast" -> LightCodeBlockPalette.copy(
+        background = Color(0xFFFFFFFF), text = Color(0xFF000000),
+        keyword = Color(0xFF0000C0), string = Color(0xFF8A0014), number = Color(0xFF005A5A),
+        comment = Color(0xFF5A5A5A), type = Color(0xFF00477A),
+    )
+    else -> LightCodeBlockPalette  // github
+}
+
 internal fun darkPaletteForTheme(theme: String): CodeBlockPalette = when (theme) {
     "dracula" -> DarkCodeBlockPalette.copy(
         background = Color(0xFF282A36), text = Color(0xFFF8F8F2),
@@ -490,15 +535,14 @@ internal val LightCodeBlockPalette = CodeBlockPalette(
 // 浅色用 primary 6% 叠白而非纯白：跟主题联动，又不压过语法高亮
 @Composable
 fun codeBlockPalette(dark: Boolean, primaryTint: Color): CodeBlockPalette {
+    val theme = LocalCodeTheme.current
     if (!dark) {
-        return LightCodeBlockPalette.copy(
-            background = primaryTint
-                .copy(alpha = 0.06f)
-                .compositeOver(Color.White)
-        )
+        // v0.4.11：浅色也按 codeTheme 出配色（GitHub 浅色仍走 primary 6% 融白，其余主题用官方浅色底）
+        return if (theme == "github") LightCodeBlockPalette.copy(
+            background = primaryTint.copy(alpha = 0.06f).compositeOver(Color.White)
+        ) else lightPaletteForTheme(theme)
     }
     // 深色：按预设方案（MChat 式多方案）
-    val theme = LocalCodeTheme.current
     return when (theme) {
         "dracula" -> DarkCodeBlockPalette.copy(
             background = Color(0xFF282A36), text = Color(0xFFF8F8F2),
@@ -534,7 +578,7 @@ private fun highlightCodeLines(
     val plain = lines.map { AnnotatedString(it) }
     if (language == null) return plain
     return try {
-        val palette = if (dark) darkPaletteForTheme(codeTheme) else LightCodeBlockPalette
+        val palette = if (dark) darkPaletteForTheme(codeTheme) else lightPaletteForTheme(codeTheme)
         val grammar = codeGrammar(context, language) ?: return plain
         val tokens = codeTokens(grammar, lines)
         val theme = codeTheme(dark, palette)

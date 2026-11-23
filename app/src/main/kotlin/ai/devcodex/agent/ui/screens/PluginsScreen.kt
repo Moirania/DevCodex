@@ -155,13 +155,12 @@ fun PluginsScreen(vm: AppViewModel) {
                         item { Text("市场源：Moirania/DevCodex marketplace.json · 欢迎提 PR 上架插件", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
                 }
-                Spacer(Modifier.fillMaxSize())
             } else Box(Modifier.fillMaxSize()) {
         // 开发文档大入口（首屏第一项）
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
             shape = RoundedCornerShape(16.dp),
-            modifier = Modifier.padding(padding).fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             onClick = { showGuide = true },
         ) {
             Row(

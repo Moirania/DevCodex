@@ -118,7 +118,7 @@ class WorkspaceRepo(private val context: Context) {
     }
 
     fun formatDate(ts: Long): String =
-        SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(ts))
+        SimpleDateFormat("MM-dd HH:mm", Locale.US).format(Date(ts))
 
     companion object {
         fun textPreview(file: File, maxChars: Int = 200_000): String = runCatching {

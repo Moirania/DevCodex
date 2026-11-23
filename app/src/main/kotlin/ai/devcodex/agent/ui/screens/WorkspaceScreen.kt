@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -30,6 +31,7 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.DropdownMenu
@@ -82,24 +84,37 @@ fun WorkspaceScreen(vm: AppViewModel) {
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(if (currentDir.isBlank()) "工作区" else currentDir) },
-                navigationIcon = {
+            // v0.4.11 全屏沉浸式：紧凑 header（44dp）替代 TopAppBar——列表多一屏内容，
+            // 返回按钮仅在子目录显示，手势返回随时可用
+            Surface(
+                color = MaterialTheme.colorScheme.background,
+                shadowElevation = 0.dp,
+            ) {
+                Row(
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                ) {
                     if (currentDir.isNotBlank()) {
                         IconButton(onClick = {
-                            // 修根级目录无法返回：substring 不变时回根
                             val parent = currentDir.substringBeforeLast('/')
                             currentDir = if (parent == currentDir) "" else parent
-                        }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                        }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", Modifier.size(20.dp)) }
                     }
-                },
-                actions = {
-                    // 新建文件 / 新建文件夹（速度抽屉：折叠菜单）
+                    Text(
+                        if (currentDir.isBlank()) "工作区" else currentDir,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
                     var showNewMenu by remember { mutableStateOf(false) }
                     var showNewFile by remember { mutableStateOf(false) }
                     var showNewDir by remember { mutableStateOf(false) }
-                    IconButton(onClick = { showNewMenu = true }) { Icon(Icons.Filled.Add, "新建") }
+                    IconButton(onClick = { showNewMenu = true }) { Icon(Icons.Filled.Add, "新建", Modifier.size(20.dp)) }
                     DropdownMenu(expanded = showNewMenu, onDismissRequest = { showNewMenu = false }) {
                         DropdownMenuItem(text = { Text("新建文件") }, leadingIcon = { Icon(Icons.AutoMirrored.Filled.InsertDriveFile, null, Modifier.size(18.dp)) }, onClick = { showNewMenu = false; showNewFile = true })
                         DropdownMenuItem(text = { Text("新建文件夹") }, leadingIcon = { Icon(Icons.Filled.Folder, null, Modifier.size(18.dp)) }, onClick = { showNewMenu = false; showNewDir = true })
@@ -130,8 +145,8 @@ fun WorkspaceScreen(vm: AppViewModel) {
                             dismissButton = { TextButton(onClick = { showNewFile = false; showNewDir = false }) { Text("取消") } },
                         )
                     }
-                },
-            )
+                }
+            }
         },
         floatingActionButton = {
             FloatingActionButton(onClick = { picker.launch("*/*") }) {
