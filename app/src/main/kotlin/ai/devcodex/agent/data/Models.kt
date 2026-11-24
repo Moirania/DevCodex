@@ -174,8 +174,8 @@ data class ThemePrefsData(
     val dynamicColor: Boolean = false,
     val amoled: Boolean = false,
     val autoCollapseThinking: Boolean = true,   // 思考结束自动折叠思考内容
-    val showNick: Boolean = true,              // 头像上方显示昵称
-    val showAvatar: Boolean = true,            // 显示头像（独立开关）
+    val nickEnabled: Boolean = false,             // 头像上方显示昵称（v0.4.13 默认关——用户在设置里自行开启）
+    val avatarEnabled: Boolean = false,           // 显示头像（v0.4.13 默认关——用户在设置里自行开启）
     val codeTheme: String = "github",         // 代码块配色：github/dracula/onedark/solar
     val approvalMode: String = "ASSISTED",   // 工具审批模式：FULL(全自动) / ASSISTED(高危审) / REQUEST(每步审)
     val appFont: String = "anthropic",   // Anthropic Serif（英文），中文回退系统

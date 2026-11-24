@@ -267,7 +267,7 @@ object PRootUbuntu {
             fun str(a: Int, b: Int) = String(header, a, b - a, Charsets.UTF_8).trimEnd('\u0000', ' ')
             fun oct(a: Int, b: Int): Long {
                 val raw = String(header, a, b - a, Charsets.UTF_8).trimEnd('\u0000', ' ')
-                return if (raw.isEmpty()) 0L else java.lang.Long.parseLong(raw.trim(), 8)
+                return if (raw.isEmpty()) 0L else runCatching { java.lang.Long.parseLong(raw.trim(), 8) }.getOrDefault(0L)
             }
             val type = header[156]
             val size = oct(124, 136)
@@ -281,7 +281,7 @@ object PRootUbuntu {
                 if (n < 0) error("tar 数据截断: $name")
                 rd += n
             }
-            val pad = ((511 - (size % 512)) % 512).toInt()
+            val pad = ((512 - (size % 512)) % 512).toInt()  // v0.4.13 修 off-by-one：511 使每 entry 少读 1 字节 → 全流错位
             if (pad > 0) {
                 val skip = ByteArray(pad)
                 var sk = 0

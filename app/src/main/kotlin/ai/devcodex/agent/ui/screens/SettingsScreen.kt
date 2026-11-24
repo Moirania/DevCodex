@@ -237,14 +237,14 @@ private fun ThemePage(vm: AppViewModel, settings: AppSettings, modifier: Modifie
             headlineContent = { Text("显示昵称") },
             supportingContent = { Text("在头像上方显示 AI 与用户昵称") },
             trailingContent = {
-                Switch(checked = t.showNick, onCheckedChange = { on -> save { it.copy(showNick = on) } })
+                Switch(checked = t.nickEnabled, onCheckedChange = { on -> save { it.copy(nickEnabled = on) } })
             },
         )
         ListItem(
             headlineContent = { Text("显示头像") },
             supportingContent = { Text("关闭后聊天两侧不显示头像（昵称开关独立）") },
             trailingContent = {
-                Switch(checked = t.showAvatar, onCheckedChange = { on -> save { it.copy(showAvatar = on) } })
+                Switch(checked = t.avatarEnabled, onCheckedChange = { on -> save { it.copy(avatarEnabled = on) } })
             },
         )
         // v0.4.7 比例缩放：自适应不同分辨率手机/平板（全局字号系数）

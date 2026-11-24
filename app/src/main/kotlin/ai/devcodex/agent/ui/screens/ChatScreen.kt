@@ -461,7 +461,7 @@ fun ChatScreen(vm: AppViewModel) {
                                     )
                                 }
                                 Spacer(Modifier.width(6.dp))
-                                if (settings.theme.showAvatar && settings.theme.showNick) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(34.dp)) {
+                                if (settings.theme.avatarEnabled && settings.theme.nickEnabled) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(34.dp)) {
                                     // v0.4.7 头像渐变描边（用户侧翠绿系）
                                     Box(Modifier.clip(androidx.compose.foundation.shape.CircleShape).size(26.dp).background(
                                         androidx.compose.ui.graphics.Brush.linearGradient(listOf(androidx.compose.ui.graphics.Color(0xFF34D399), androidx.compose.ui.graphics.Color(0xFF059669)))
@@ -474,7 +474,7 @@ fun ChatScreen(vm: AppViewModel) {
                                         )
                                     }
                                     Text(settings.theme.userNick.ifBlank { "我" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                } else if (settings.theme.showAvatar) ai.devcodex.agent.ui.components.Avatar(
+                                } else if (settings.theme.avatarEnabled) ai.devcodex.agent.ui.components.Avatar(
                                     name = settings.theme.userNick,
                                     avatarFile = settings.theme.userAvatar,
                                     defaultColor = androidx.compose.ui.graphics.Color(0xFF059669),
@@ -485,7 +485,7 @@ fun ChatScreen(vm: AppViewModel) {
                             msg.role == "tool" -> {}
                             msg.role == "assistant" -> {
                                 Row(Modifier.fillMaxWidth()) {
-                                    if (settings.theme.showAvatar && settings.theme.showNick) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(34.dp)) {
+                                    if (settings.theme.avatarEnabled && settings.theme.nickEnabled) Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(34.dp)) {
                                         // v0.4.7 头像渐变描边（AI 侧紫金系）
                                         Box(Modifier.clip(androidx.compose.foundation.shape.CircleShape).size(26.dp).background(
                                             androidx.compose.ui.graphics.Brush.linearGradient(listOf(androidx.compose.ui.graphics.Color(0xFF4F46E5), androidx.compose.ui.graphics.Color(0xFFD97706)))
@@ -499,7 +499,7 @@ fun ChatScreen(vm: AppViewModel) {
                                             )
                                         }
                                         Text(settings.theme.aiNick.ifBlank { "DevCodex" }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    } else if (settings.theme.showAvatar) ai.devcodex.agent.ui.components.Avatar(
+                                    } else if (settings.theme.avatarEnabled) ai.devcodex.agent.ui.components.Avatar(
                                         name = settings.theme.aiNick,
                                         avatarFile = settings.theme.aiAvatar,
                                         defaultColor = androidx.compose.ui.graphics.Color(0xFF4F46E5),
