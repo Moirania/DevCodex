@@ -15,6 +15,12 @@ import java.net.URL
  */
 object StaticToolchain {
     private const val PY_URL = "https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-aarch64-unknown-linux-musl-install_only_stripped.tar.gz"
+    // v0.4.12 国内镜像 fallback（GitHub release 直连慢 → 10 分钟读超时实锤）
+    private val PY_URL_FALLBACKS = listOf(
+        PY_URL,
+        "https://ghfast.top/https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-aarch64-unknown-linux-musl-install_only_stripped.tar.gz",
+        "https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.13.18%2B20261110-aarch64-unknown-linux-musl-install_only_stripped.tar.gz",
+    )
 
     fun pythonDir(ctx: Context): File = File(ctx.filesDir, "static/python3")
     fun pythonBin(ctx: Context): File = File(pythonDir(ctx), "bin/python3")
@@ -29,22 +35,33 @@ object StaticToolchain {
             val tmp = File(ctx.cacheDir, "py_static.tar.gz")
             // 下载（HttpURLConnection，30s 连接 / 10 分钟读超时）
             log("下载静态 Python（约 26MB）…")
-            val conn = URL(PY_URL).openConnection() as HttpURLConnection
-            conn.connectTimeout = 30000
-            conn.readTimeout = 600000
-            conn.instanceFollowRedirects = true
-            conn.setRequestProperty("User-Agent", "DevCodex")
-            ai.devcodex.agent.util.DebugLog.i("StaticToolchain", "downloading: code=${conn.responseCode} len=${conn.contentLength} url=$PY_URL")
-            if (conn.responseCode !in 200..299) error("下载失败 HTTP ${conn.responseCode}")
             var copied = 0L
-            conn.inputStream.use { input -> tmp.outputStream().use { os ->
-                val buf = ByteArray(1 shl 16)
-                while (true) {
-                    val n = input.read(buf)
-                    if (n < 0) break
-                    os.write(buf, 0, n); copied += n
+            var lastErr: Exception? = null
+            for (u in PY_URL_FALLBACKS) {
+                try {
+                    val conn = URL(u).openConnection() as HttpURLConnection
+                    conn.connectTimeout = 20000
+                    conn.readTimeout = 900000
+                    conn.instanceFollowRedirects = true
+                    conn.setRequestProperty("User-Agent", "DevCodex")
+                    ai.devcodex.agent.util.DebugLog.i("StaticToolchain", "downloading: code=${conn.responseCode} len=${conn.contentLength} src=${u.take(60)}")
+                    if (conn.responseCode !in 200..299) error("下载失败 HTTP ${conn.responseCode}")
+                    conn.inputStream.use { input -> tmp.outputStream().use { os ->
+                        val buf = ByteArray(1 shl 16)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            os.write(buf, 0, n); copied += n
+                        }
+                    } }
+                    lastErr = null; break
+                } catch (e: Exception) {
+                    lastErr = e
+                    ai.devcodex.agent.util.DebugLog.w("StaticToolchain", "source failed (${u.take(40)}): ${e.message}")
                 }
-            } }
+            }
+            lastErr?.let { throw it }
+            if (copied < 10_000_000) error("下载不完整：仅 $copied 字节（26MB 预期）")
             ai.devcodex.agent.util.DebugLog.i("StaticToolchain", "downloaded ${copied / 1048576}MB -> ${tmp.absolutePath}")
             // tar.gz 流式解压（纯 Java GZIP + tar，复用 PRootUbuntu 同款逻辑）
             log("解压中…")
