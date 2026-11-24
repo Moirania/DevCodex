@@ -114,7 +114,8 @@ object PRootUbuntu {
                 // v0.4.12 根修：AAPT2 打包会把 .gz 后缀剥掉（解压存成 assets/ubuntu-rootfs.tar，
                 // 装机 open("...tar.gz") 直接 FileNotFoundException → rootfs 从未解压的元凶）。
                 // 嗅探流魔数自适应：1f 8b = gzip 流套 GZIPInputStream，否则当裸 tar
-                val names = listOf("ubuntu-rootfs.tar.gz", "ubuntu-rootfs.tar")
+                // v0.4.12b：AAPT2 会把 .gz 后缀解压重命名（.gz→.tar 剥后缀）——资产改名 .bin 绕开
+                val names = listOf("ubuntu-rootfs.bin", "ubuntu-rootfs.tar.gz", "ubuntu-rootfs.tar")
                 var stream: java.io.InputStream? = null
                 var used = ""
                 for (n in names) {

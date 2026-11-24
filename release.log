@@ -2,77 +2,26 @@ To honour the JVM settings for this build a single-use Daemon process will be fo
 Daemon will be stopped at the end of the build 
 > Task :app:preBuild UP-TO-DATE
 > Task :app:preReleaseBuild UP-TO-DATE
+> Task :app:mergeReleaseJniLibFolders UP-TO-DATE
+> Task :app:mergeReleaseNativeLibs UP-TO-DATE
+> Task :app:stripReleaseDebugSymbols UP-TO-DATE
+> Task :app:extractReleaseNativeSymbolTables UP-TO-DATE
+> Task :app:mergeReleaseNativeDebugMetadata NO-SOURCE
 > Task :app:checkReleaseDuplicateClasses UP-TO-DATE
 > Task :app:compileReleaseAidl UP-TO-DATE
-> Task :app:generateReleaseBuildConfig
+> Task :app:generateReleaseBuildConfig UP-TO-DATE
 > Task :app:generateReleaseResources UP-TO-DATE
 > Task :app:packageReleaseResources UP-TO-DATE
 > Task :app:processReleaseNavigationResources UP-TO-DATE
 > Task :app:parseReleaseLocalResources UP-TO-DATE
 > Task :app:generateReleaseRFile UP-TO-DATE
 > Task :app:javaPreCompileRelease UP-TO-DATE
-> Task :app:mergeReleaseArtProfile UP-TO-DATE
 > Task :app:checkReleaseAarMetadata UP-TO-DATE
 > Task :app:mapReleaseSourceSetPaths UP-TO-DATE
 > Task :app:compileReleaseNavigationResources UP-TO-DATE
 > Task :app:mergeReleaseResources UP-TO-DATE
-> Task :app:createReleaseCompatibleScreenManifests
+> Task :app:createReleaseCompatibleScreenManifests UP-TO-DATE
 > Task :app:extractDeepLinksRelease UP-TO-DATE
-
-> Task :app:processReleaseMainManifest
-/home/z/my-project/DevCodex-v3/app/src/main/AndroidManifest.xml:12:5-77 Warning:
-	Element uses-permission#android.permission.POST_NOTIFICATIONS at AndroidManifest.xml:12:5-77 duplicated with element declared at AndroidManifest.xml:9:5-77
-/home/z/my-project/DevCodex-v3/app/src/main/AndroidManifest.xml:13:5-77 Warning:
-	Element uses-permission#android.permission.FOREGROUND_SERVICE at AndroidManifest.xml:13:5-77 duplicated with element declared at AndroidManifest.xml:11:5-77
-
-> Task :app:processReleaseManifest
-> Task :app:processReleaseManifestForPackage
-> Task :app:processReleaseResources
-> Task :app:extractProguardFiles UP-TO-DATE
-> Task :app:mergeReleaseStartupProfile UP-TO-DATE
-> Task :app:generateReleaseAssets UP-TO-DATE
-> Task :app:mergeReleaseAssets
-
-> Task :app:compileReleaseKotlin
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/ChatScreen.kt:140:21 'val LocalClipboardManager: ProvidableCompositionLocal<ClipboardManager>' is deprecated. Use LocalClipboard instead which supports suspend functions.
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/ChatScreen.kt:363:47 'val Icons.Filled.Dvr: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Dvr.
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/ChatScreen.kt:458:108 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/ChatScreen.kt:471:77 Unnecessary non-null assertion (!!) on a non-null receiver of type 'String'.
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/SettingsScreen.kt:497:36 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/SettingsScreen.kt:1243:150 'val Icons.Filled.Chat: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.Chat.
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/SettingsScreen.kt:1259:150 'val Icons.Filled.MenuBook: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Filled.MenuBook.
-w: file:///home/z/my-project/DevCodex-v3/app/src/main/kotlin/ai/devcodex/agent/ui/screens/StatsScreen.kt:282:53 Elvis operator (?:) always returns the left operand of non-nullable type 'Int'.
-
-> Task :app:compressReleaseAssets
-> Task :app:compileReleaseJavaWithJavac
-> Task :app:mergeReleaseGeneratedProguardFiles UP-TO-DATE
-> Task :app:processReleaseJavaRes UP-TO-DATE
-> Task :app:mergeReleaseJavaResource UP-TO-DATE
-> Task :app:expandReleaseArtProfileWildcards
-> Task :app:produceReleaseComposeMapping
-> Task :app:reportReleaseComposeMappingErrors
-> Task :app:extractReleaseVersionControlInfo
-> Task :app:generateReleaseLintVitalReportModel
-> Task :app:minifyReleaseWithR8
-> Task :app:lintVitalAnalyzeRelease
-> Task :app:lintVitalReportRelease
-> Task :app:lintVitalRelease
-> Task :app:optimizeReleaseResources
-> Task :app:collectReleaseDependencies UP-TO-DATE
-> Task :app:sdkReleaseDependencyData UP-TO-DATE
-> Task :app:mergeReleaseJniLibFolders UP-TO-DATE
-> Task :app:mergeReleaseNativeLibs UP-TO-DATE
-> Task :app:stripReleaseDebugSymbols UP-TO-DATE
-> Task :app:validateSigningRelease UP-TO-DATE
-> Task :app:writeReleaseAppMetadata UP-TO-DATE
-> Task :app:writeReleaseSigningConfigVersions UP-TO-DATE
-> Task :app:mergeReleaseComposeMapping
-> Task :app:compileReleaseArtProfile SKIPPED
-> Task :app:packageRelease
-> Task :app:createReleaseApkListingFileRedirect
-
-[Incubating] Problems report is available at: file:///home/z/my-project/DevCodex-v3/build/reports/problems/problems-report.html
-
-BUILD SUCCESSFUL in 8m 6s
-50 actionable tasks: 23 executed, 27 up-to-date
-Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.6.0/userguide/configuration_cache_enabling.html
+> Task :app:processReleaseMainManifest UP-TO-DATE
+> Task :app:processReleaseManifest UP-TO-DATE
+> Task :app:processReleaseManifestForPackage UP-TO-DATE

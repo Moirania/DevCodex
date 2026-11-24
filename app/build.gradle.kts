@@ -7,11 +7,6 @@ plugins {
 }
 
 android {
-    // v0.4.12：保住 .gz 后缀——AAPT2 默认会解压存 .gz 并剥掉后缀（assets/ubuntu-rootfs.tar.gz
-    // → ubuntu-rootfs.tar），代码 open("...tar.gz") FileNotFound → rootfs 从未解压的根因
-    androidResources {
-        noCompress += listOf("gz", "tgz", "zip", "tar")
-    }
     lint {
         disable += "ExpiredTargetSdkVersion"
         abortOnError = false

@@ -172,7 +172,7 @@ object BuiltinTools {
 
     val linuxExec = ToolDef(
         name = "linux_exec", risk = ToolDef.Risk.HIGH,
-        description = "Linux 沙盒执行：Root 设备走 chroot 原生 Ubuntu（零翻译开销）；无 Root 走 PRoot Ubuntu（自带 apt/python 全套，首次初始化约 1-2 分钟）；均不可用时兜底 Termux。默认工作目录=工作区",
+        description = "Linux 环境执行命令（bash 全套工具链）。工作目录 /home/user/workspace（即应用工作区，路径自动映射）。Python 脚本用 python_run、Node 用 node_run。首次使用 Python/Node 会自动后台安装（1-3 分钟）",
         parameters = obj {
             put("type", "object")
             put("properties", obj {

@@ -179,7 +179,23 @@ object ShellAccess {
             ai.devcodex.agent.util.DebugLog.w("PRoot", "ensure failed → ${ai.devcodex.agent.shell.PRootUbuntu.fatalReason()}, 降级 Termux")
         }
         if (!ai.devcodex.agent.shell.TermuxRuntime.ensure(c)) return "ERROR: Termux 原生引擎未就绪（" + ai.devcodex.agent.shell.TermuxRuntime.lastError + "）"
-        return ai.devcodex.agent.shell.TermuxRuntime.exec(c, command, 30, cwd)
+        // v0.4.12c Operit 同款 PathMapper：AI 视角 Linux 路径 ↔ Android 实际路径双向映射。
+        // 观感层——AI 以为在 /home/user/workspace 的 Linux 里，实际命令在 Termux 原生执行
+        val ws = ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().absolutePath
+        val termuxHome = java.io.File(ai.devcodex.agent.shell.TermuxRuntime.prefix(c), "home").absolutePath
+        val fakeHome = "/home/user"
+        fun toLinux(s: String) = s
+            .replace(ws, "/home/user/workspace")
+            .replace(termuxHome, "/home/user")
+            .replace(java.io.File(c.filesDir, "termux/usr").absolutePath, "/usr")
+            .replace(c.filesDir.absolutePath, "/data/devcodex")
+        fun fromLinux(s: String) = s
+            .replace("/home/user/workspace", ws)
+            .replace("/home/user", termuxHome)
+            .replace(" ~/", " $termuxHome/")
+        val mapped = fromLinux(command)
+        val raw = ai.devcodex.agent.shell.TermuxRuntime.exec(c, mapped, 30, cwd)
+        return toLinux(raw)
     }
 
     /** 本地沙盒执行（app uid，工作目录=工作区）：toybox 提供常规命令，可访问应用私有目录与自定义工作区 */
