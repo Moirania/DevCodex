@@ -34,8 +34,18 @@ object StaticToolchain {
             conn.readTimeout = 600000
             conn.instanceFollowRedirects = true
             conn.setRequestProperty("User-Agent", "DevCodex")
+            ai.devcodex.agent.util.DebugLog.i("StaticToolchain", "downloading: code=${conn.responseCode} len=${conn.contentLength} url=$PY_URL")
             if (conn.responseCode !in 200..299) error("下载失败 HTTP ${conn.responseCode}")
-            conn.inputStream.use { input -> tmp.outputStream().use { input.copyTo(it) } }
+            var copied = 0L
+            conn.inputStream.use { input -> tmp.outputStream().use { os ->
+                val buf = ByteArray(1 shl 16)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    os.write(buf, 0, n); copied += n
+                }
+            } }
+            ai.devcodex.agent.util.DebugLog.i("StaticToolchain", "downloaded ${copied / 1048576}MB -> ${tmp.absolutePath}")
             // tar.gz 流式解压（纯 Java GZIP + tar，复用 PRootUbuntu 同款逻辑）
             log("解压中…")
             dir.deleteRecursively(); dir.parentFile?.mkdirs(); dir.mkdirs()
@@ -48,6 +58,8 @@ object StaticToolchain {
             // 验证：直接 exec --version（静态 musl 二进制在 Android bionic 上原生可执行）
             val p = ProcessBuilder(pythonBin(ctx).absolutePath, "--version")
                 .redirectErrorStream(true).start()
+            val pOut = p.inputStream.bufferedReader().use { it.readText() }
+            ai.devcodex.agent.util.DebugLog.i("StaticToolchain", "verify: exit=${p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)} out=[$pOut] bin=${pythonBin(ctx).absolutePath} exists=${pythonBin(ctx).isFile}")
             val ok = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
             if (!ok) { dir.deleteRecursively(); error("python --version 验证失败") }
             log("静态 Python 就绪")

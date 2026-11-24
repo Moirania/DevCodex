@@ -1098,7 +1098,12 @@ DevCodex **不收集任何用户数据**。所有会话、角色卡、设置、�
             )
         },
     ) { pad ->
-        Column(Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Column(Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(pad)
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp)) {
             // 说明卡
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
@@ -1569,3 +1574,4 @@ private fun parsePromptFile(uri: android.net.Uri, raw: String): String? {
         }
     }.getOrNull()
 }
+

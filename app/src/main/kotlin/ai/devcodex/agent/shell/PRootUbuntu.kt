@@ -24,6 +24,9 @@ object PRootUbuntu {
         }
     }
 
+    /** v0.4.12：ensure 失败原因查询（供 linuxExec 降级时记录） */
+    fun fatalReason(): String = ensureFatal ?: "unknown"
+
     /** 重试（v0.4.6）：清失败缓存 + readyMark，下次 ensure 重新解压 rootfs（约 1 分钟） */
     fun resetAndRetry(ctx: Context) {
         ensureFatal = null
@@ -108,11 +111,35 @@ object PRootUbuntu {
             if (!readyMark.exists() || !root.resolve("bin").exists()) {
                 root.mkdirs()
                 onProgress(5)
-                ctx.assets.open("ubuntu-rootfs.tar.gz").buffered().use { raw ->
-                    java.util.zip.GZIPInputStream(raw, 1 shl 16).use { gz ->
-                        extractTar(gz, root) { done, total -> onProgress(5 + (90 * done / total.coerceAtLeast(1))) }
+                // v0.4.12 根修：AAPT2 打包会把 .gz 后缀剥掉（解压存成 assets/ubuntu-rootfs.tar，
+                // 装机 open("...tar.gz") 直接 FileNotFoundException → rootfs 从未解压的元凶）。
+                // 嗅探流魔数自适应：1f 8b = gzip 流套 GZIPInputStream，否则当裸 tar
+                val names = listOf("ubuntu-rootfs.tar.gz", "ubuntu-rootfs.tar")
+                var stream: java.io.InputStream? = null
+                var used = ""
+                for (n in names) {
+                    try {
+                        stream = ctx.assets.open(n).buffered(); used = n; break
+                    } catch (e: java.io.FileNotFoundException) {
+                        ai.devcodex.agent.util.DebugLog.w("PRoot", "asset '$n' not found, trying next…")
                     }
                 }
+                val raw = stream ?: error("APK 内找不到 Ubuntu rootfs 资产（$names）")
+                ai.devcodex.agent.util.DebugLog.i("PRoot", "rootfs asset=$used, 解压到 ${root.absolutePath}")
+                val head = ByteArray(2)
+                runCatching { raw.mark(10); raw.read(head); raw.reset() }
+                val isGzip = head[0] == 0x1f.toByte() && head[1] == 0x8b.toByte()
+                ai.devcodex.agent.util.DebugLog.i("PRoot", "magic=${head.joinToString(",") { it.toString() }} gzip=$isGzip")
+                val tarIn: java.io.InputStream = if (isGzip) java.util.zip.GZIPInputStream(raw, 1 shl 16) else raw
+                var entries = 0
+                tarIn.use { ti ->
+                    extractTar(ti, root) { done, total ->
+                        entries = done
+                        onProgress(5 + (90 * done / total.coerceAtLeast(1)))
+                    }
+                }
+                ai.devcodex.agent.util.DebugLog.i("PRoot", "rootfs 解压完成 entries=$entries, bin exists=${root.resolve("bin").exists()}")
+                if (!root.resolve("bin").exists()) error("rootfs 解压后缺 /bin（entries=$entries）")
                 onProgress(95)
                 readyMark.writeText("ok")
             }
@@ -124,7 +151,10 @@ object PRootUbuntu {
             initialized = true
             onProgress(100)
             root.resolve("bin").exists()
-        }.onFailure { ensureFatal = "初始化失败: ${it.message}" }.getOrDefault(false)
+        }.onFailure {
+            ensureFatal = "初始化失败: ${it.message}"
+            ai.devcodex.agent.util.DebugLog.e("PRoot", "ensure FAILED: ${it.message}", it)
+        }.getOrDefault(false)
     }
 
     /** proot 可用性缓存：null=未测，true=可用，false=设备 ROM seccomp 禁 ptrace 等 */
@@ -145,13 +175,28 @@ object PRootUbuntu {
                 .redirectErrorStream(true).apply {
                     environment()["LD_LIBRARY_PATH"] = prootLibDir + ":" + termuxLib
                 }.start()
+            // v0.4.12 用户要求：proot 原始返回数据全量进日志（stdout+stderr+exit code）
+            val out = p.inputStream.bufferedReader().use { it.readText().take(2000) }
             val done = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
-            if (!done) { p.destroyForcibly(); false } else p.exitValue() == 0
+            val code = if (done) p.exitValue() else { p.destroyForcibly(); -1 }
+            val verdict = when {
+                code == 0 -> "OK"
+                code == 159 -> "SIGSYS(159): ROM seccomp 禁 ptrace"
+                code == 13 -> "SIGPIPE?"
+                code == 139 -> "SIGSEGV: proot 崩溃（版本/ABI 问题）"
+                code == 127 -> "rootfs 缺 /bin/true（rootfs 未解压或损坏）"
+                code == -1 -> "20s 超时（挂死）"
+                else -> "exit=$code"
+            }
+            ai.devcodex.agent.util.DebugLog.i("PRoot", "probe raw exit=$code verdict=$verdict output=[${out.replace("\n", " | ").take(400)}]")
+            code == 0
         }.getOrDefault(false)
         prootBroken = ok.not()
-        if (!ok) ai.devcodex.agent.util.DebugLog.w("PRoot", "probe failed: device ROM blocks ptrace (seccomp) — Ubuntu sandbox unavailable on this device")
+        if (!ok) ai.devcodex.agent.util.DebugLog.w("PRoot", "probe failed → ${ensureFatalOrProbeHint(root)}")
         return ok
     }
+    private fun ensureFatalOrProbeHint(root: File): String =
+        if (!root.resolve("bin").exists()) "rootfs 未就绪（${ensureFatal ?: "bin 缺失"}）" else "ROM ptrace 限制或 proot 环境问题（看上方 probe raw 行）"
 
     /** 在 Ubuntu 内执行命令（PRoot 用户空间） */
     fun exec(ctx: Context, command: String, timeoutSec: Int = 150): String {

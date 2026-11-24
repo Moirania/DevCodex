@@ -169,8 +169,14 @@ object ShellAccess {
             val r = runCatching { ai.devcodex.agent.shell.PRootUbuntu.chrootExec(c, command) }.getOrNull()
             if (r != null) return r
         }
-        if (runCatching { ai.devcodex.agent.shell.PRootUbuntu.ensure(c) }.getOrDefault(false)) {
-            return ai.devcodex.agent.shell.PRootUbuntu.exec(c, command, 120)
+        val ubOk = runCatching { ai.devcodex.agent.shell.PRootUbuntu.ensure(c) }.getOrDefault(false)
+        if (ubOk) {
+            val out = ai.devcodex.agent.shell.PRootUbuntu.exec(c, command, 120)
+            ai.devcodex.agent.util.DebugLog.i("PRoot", "exec raw head=[${out.lineSequence().take(6).joinToString(" | ").take(400)}]")
+            return out
+        } else {
+            // v0.4.12：ensure 失败不再静默——死因进日志（AAPT 剥后缀/解压损坏/超时等此前全被吞）
+            ai.devcodex.agent.util.DebugLog.w("PRoot", "ensure failed → ${ai.devcodex.agent.shell.PRootUbuntu.fatalReason()}, 降级 Termux")
         }
         if (!ai.devcodex.agent.shell.TermuxRuntime.ensure(c)) return "ERROR: Termux 原生引擎未就绪（" + ai.devcodex.agent.shell.TermuxRuntime.lastError + "）"
         return ai.devcodex.agent.shell.TermuxRuntime.exec(c, command, 30, cwd)

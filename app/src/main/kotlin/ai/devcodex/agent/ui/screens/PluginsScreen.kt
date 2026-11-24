@@ -101,7 +101,9 @@ fun PluginsScreen(vm: AppViewModel) {
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize()) {
+        // v0.4.12 修"看不见市场按钮"：Column 必须消费 Scaffold padding，否则 Tab 行从 y=0
+        // 开始被 TopAppBar 盖住（本地列表自带 padding(padding) 所以内容正常、唯独 Tab 隐身）
+        Column(Modifier.fillMaxSize().padding(padding)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 androidx.compose.material3.FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("已安装 (${plugins.size})") })
                 androidx.compose.material3.FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("插件市场") })
@@ -118,7 +120,7 @@ fun PluginsScreen(vm: AppViewModel) {
                     }
                     else -> LazyColumn(
                         Modifier.fillMaxSize(),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 10.dp, bottom = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         items(marketItems, key = { it.id }) { m ->
@@ -198,8 +200,8 @@ fun PluginsScreen(vm: AppViewModel) {
             }
         } else {
             LazyColumn(
-                Modifier.fillMaxSize().padding(padding),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+                Modifier.fillMaxSize(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 10.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 items(plugins, key = { it.id }) { p ->
