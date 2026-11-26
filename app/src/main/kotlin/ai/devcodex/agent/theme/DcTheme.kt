@@ -19,7 +19,7 @@ import androidx.core.view.WindowCompat
 enum class ColorMode { SYSTEM, LIGHT, DARK }
 
 data class ThemePrefs(
-    val presetId: String = "claude",
+    val presetId2: String = "claude",
     val colorMode: ColorMode = ColorMode.SYSTEM,
     val dynamicColor: Boolean = false,
     val amoled: Boolean = false,
@@ -52,7 +52,7 @@ fun DcTheme(
         val ctx = LocalContext.current
         if (darkTheme) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
     } else {
-        findPresetTheme(prefs.presetId).scheme(darkTheme)
+        findPresetTheme(prefs.presetId2).scheme(darkTheme)
     }
     val scheme = if (darkTheme && prefs.amoled) {
         base.copy(

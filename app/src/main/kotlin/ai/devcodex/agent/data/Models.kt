@@ -169,7 +169,7 @@ data class AppSettings(
 
 @Serializable
 data class ThemePrefsData(
-    val presetId: String = "claude",
+    val presetId2: String = "operitpaper",   // v0.4.14 字段改名迁移：全员落纸感主题（Operit2 同款）
     val colorMode: String = "SYSTEM",    // SYSTEM LIGHT DARK
     val dynamicColor: Boolean = false,
     val amoled: Boolean = false,

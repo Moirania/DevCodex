@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
             val vm: AppViewModel = viewModel(factory = AppViewModel.FACTORY)
             val settings by vm.settings.collectAsState(initial = ai.devcodex.agent.data.AppSettings())
             DcTheme(prefs = ThemePrefs(
-                presetId = settings.theme.presetId,
+                presetId2 = settings.theme.presetId2,
                 colorMode = runCatching { ColorMode.valueOf(settings.theme.colorMode) }.getOrDefault(ColorMode.SYSTEM),
                 dynamicColor = settings.theme.dynamicColor,
                 amoled = settings.theme.amoled,

@@ -221,6 +221,7 @@ object PRootUbuntu {
             val prootLibDir = File(ctx.filesDir, "proot-bin").absolutePath
             pb.redirectErrorStream(true).apply {
                 // proot-bin 优先：proot 自身动态依赖 talloc/shmem/termux-exec 全部自带
+                environment()["PROOT_TMP_DIR"] = java.io.File(ctx.cacheDir, "proot-tmp").apply { mkdirs() }.absolutePath  // v0.4.14 修烤死 tmp
                 environment()["LD_LIBRARY_PATH"] = prootLibDir + ":" + termuxLib + ":" + (System.getenv("LD_LIBRARY_PATH") ?: "")
                 environment()["PATH"] = File(ctx.filesDir, "usr/bin").absolutePath + ":/system/bin:/system/xbin"
                 // proot 临时目录默认 /tmp（不存在），指向 cache

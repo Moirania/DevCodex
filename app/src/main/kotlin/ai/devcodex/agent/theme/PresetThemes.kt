@@ -2,6 +2,7 @@ package ai.devcodex.agent.theme
 
 import androidx.compose.material3.ColorScheme
 import ai.devcodex.agent.theme.presets.AutumnThemePreset
+import ai.devcodex.agent.theme.presets.OperitPaperTheme
 import ai.devcodex.agent.theme.presets.BlackThemePreset
 import ai.devcodex.agent.theme.presets.ClaudeThemePreset
 import ai.devcodex.agent.theme.presets.MinimalThemePreset
@@ -28,6 +29,7 @@ data class PresetTheme(
 }
 
 val PresetThemes = listOf(
+    OperitPaperTheme,
     SakuraThemePreset,
     OceanThemePreset,
     SpringThemePreset,

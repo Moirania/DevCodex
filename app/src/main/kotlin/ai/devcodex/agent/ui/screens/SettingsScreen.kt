@@ -340,7 +340,7 @@ private fun ThemePage(vm: AppViewModel, settings: AppSettings, modifier: Modifie
             items(PresetThemes) { preset ->
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable { save { it.copy(presetId = preset.id) } },
+                    modifier = Modifier.clickable { save { it.copy(presetId2 = preset.id) } },
                 ) {
                     // MChat 式迷你界面预览卡（真实 preset 配色）
                     Column(
@@ -350,8 +350,8 @@ private fun ThemePage(vm: AppViewModel, settings: AppSettings, modifier: Modifie
                             .clip(RoundedCornerShape(12.dp))
                             .background(preset.light.surface)
                             .border(
-                                width = if (t.presetId == preset.id) 2.dp else 0.5.dp,
-                                color = if (t.presetId == preset.id) MaterialTheme.colorScheme.primary else preset.light.outlineVariant,
+                                width = if (t.presetId2 == preset.id) 2.dp else 0.5.dp,
+                                color = if (t.presetId2 == preset.id) MaterialTheme.colorScheme.primary else preset.light.outlineVariant,
                                 shape = RoundedCornerShape(12.dp),
                             )
                             .padding(6.dp),
@@ -383,7 +383,7 @@ private fun ThemePage(vm: AppViewModel, settings: AppSettings, modifier: Modifie
                             .clip(CircleShape)
                             .background(preset.light.primary)
                             .border(
-                                width = if (t.presetId == preset.id) 3.dp else 0.dp,
+                                width = if (t.presetId2 == preset.id) 3.dp else 0.dp,
                                 color = MaterialTheme.colorScheme.primary,
                                 shape = CircleShape,
                             ),
