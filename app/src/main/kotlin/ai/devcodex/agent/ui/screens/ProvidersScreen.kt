@@ -239,6 +239,11 @@ private fun ProviderEditDialog(
     var name by remember { mutableStateOf(initial.name) }
     var type by remember { mutableStateOf(initial.type) }
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
+    // v0.4.15 Issue#3：API 格式（chat/responses/raw）
+    var apiStyle by remember { mutableStateOf(initial.apiStyle) }
+    // v0.4.15：模型级上下文设置
+    var modelCtx by remember { mutableStateOf(initial.modelCtx) }
+    var ctxEditingModel by remember { mutableStateOf<String?>(null) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
     // v0.4.10 Key 轮转池（多 key + rpm 限速）
     var keyPool by remember { mutableStateOf(initial.apiKeys) }
@@ -399,6 +404,14 @@ private fun ProviderEditDialog(
                             shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth(),
                         )
+
+                        Text("API 格式", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp))
+                        androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf("chat" to "Chat Completions（默认拼 /chat/completions）", "responses" to "Responses API（拼 /responses）", "raw" to "原样（不拼后缀）").forEach { (v, tip) ->
+                                androidx.compose.material3.FilterChip(selected = apiStyle == v, onClick = { apiStyle = v }, label = { Text(if (v == "chat") "Chat" else if (v == "responses") "Responses" else "原样") })
+                            }
+                        }
+                        Text(if (apiStyle == "raw") "请求将原样发到你填的地址（不追加任何路径）" else if (apiStyle == "responses") "OpenAI Responses API 格式（/responses 端点，中转站适用）" else "标准 OpenAI 兼容格式", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(8.dp))
                         // 连接测试（rikkahub ProviderConnectionTester 式）
                         var testResult by remember { mutableStateOf<String?>(null) }
@@ -548,6 +561,17 @@ private fun ProviderEditDialog(
                                     Spacer(Modifier.width(4.dp))
                                     Text("能力", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                                 }
+                                // v0.4.15：模型级上下文长度设置（用户要求从聊天输入栏收纳到此）
+                                TextButton(
+                                    onClick = { ctxEditingModel = m },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                ) {
+                                    Text(
+                                        "上下文" + (modelCtx[m]?.let { if (it > 0) " ${it / 1024}k" else "" } ?: ""),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                    )
+                                }
                             }
                             IconButton(onClick = {
                                 testing = m
@@ -591,13 +615,35 @@ private fun ProviderEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
+    ctxEditingModel?.let { m ->
+        val cur = modelCtx[m] ?: 0L
+        AlertDialog(
+            onDismissRequest = { ctxEditingModel = null },
+            title = { Text("上下文长度：$m") },
+            text = {
+                Column {
+                    Text("该模型单独使用的上下文窗口（压缩会话时机与用量条基准）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(0L to "默认", 32768L to "32k", 131072L to "128k", 262144L to "256k", 524288L to "512k", 1048576L to "1M").forEach { (v, label) ->
+                            androidx.compose.material3.FilterChip(selected = cur == v, onClick = {
+                                modelCtx = if (v == 0L) modelCtx - m else modelCtx + (m to v)
+                            }, label = { Text(label, style = MaterialTheme.typography.labelSmall) })
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { ctxEditingModel = null }) { Text("完成") } },
+        )
+    }
+
                     TextButton(onClick = onDismiss) { Text("取消") }
                     Spacer(Modifier.width(8.dp))
                     Button(onClick = {
                         val cleaned = normalizeBaseUrl(baseUrl)
                         onSave(initial.copy(
                             name = name.ifBlank { hostOf(cleaned) }, type = type, baseUrl = cleaned,
-                            apiKey = apiKey, apiKeys = keyPool.filter { it.key.isNotBlank() }, models = models, enabledModels = enabledModels,
+                            apiKey = apiKey, apiKeys = keyPool.filter { it.key.isNotBlank() }, apiStyle = apiStyle, modelCtx = modelCtx, models = models, enabledModels = enabledModels,
                             imageModel = imageModel.trim(), videoModel = videoModel.trim(),
                             imageEndpoint = imageEndpoint.trim(), videoSubmitUrl = videoSubmitUrl.trim(), videoStatusUrl = videoStatusUrl.trim(),
                             videoTaskIdPath = videoTaskIdPath.trim().ifBlank { "id" },

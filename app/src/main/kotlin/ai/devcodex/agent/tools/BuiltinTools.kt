@@ -242,6 +242,22 @@ object BuiltinTools {
         "已保存到记忆: $key"
     }
 
+    val memoryDelete = ToolDef(
+        name = "memory_delete",
+        description = "删除长期记忆中指定键的条目",
+        parameters = obj {
+            put("type", "object")
+            put("properties", obj {
+                put("key", obj { put("type", "string") })
+            })
+            put("required", kotlinx.serialization.json.buildJsonArray { add(kotlinx.serialization.json.JsonPrimitive("key")) })
+        },
+    ) { args ->
+        val key = ai.devcodex.agent.util.JsonArg.string(args, "key") ?: return@ToolDef "ERROR: 缺少 key"
+        val f = File(File(appContext.filesDir, "memory"), "$key.md")
+        if (f.exists()) { f.delete(); "已删除记忆: $key" } else "记忆不存在: $key"
+    }
+
     val memoryRead = ToolDef(
         name = "memory_read",
         description = "读取长期记忆（列出全部或读指定键）",
@@ -403,7 +419,7 @@ object BuiltinTools {
 
     val all: List<ToolDef> = listOf(
         fsRead, fsWrite, fsList, fsDelete, shellExec, httpRequest, appOpen, linuxExec, sshExec, sshForward,
-        memorySave, memoryRead, appList, deviceInfo,
+        memorySave, memoryDelete, memoryRead, appList, deviceInfo,
         uiSnapshot, uiTap, uiBack, uiHome, uiScroll, notify,
         skillRead, skillList,
     )

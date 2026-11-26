@@ -180,6 +180,7 @@ fun AppRoot(vm: AppViewModel) {
                             composable("extensions") { ai.devcodex.agent.ui.screens.ExtensionsScreen(vm) }
                             composable("settings") { SettingsScreen(vm) }
                             composable("terminal") { ai.devcodex.agent.ui.screens.TerminalScreen(vm) }
+                        composable("memory") { ai.devcodex.agent.ui.screens.MemoryScreen(vm) }
                         }
                     }
                 }
@@ -202,6 +203,7 @@ fun AppRoot(vm: AppViewModel) {
                         composable("extensions") { ai.devcodex.agent.ui.screens.ExtensionsScreen(vm) }
                         composable("settings") { SettingsScreen(vm) }
                             composable("terminal") { ai.devcodex.agent.ui.screens.TerminalScreen(vm) }
+                        composable("memory") { ai.devcodex.agent.ui.screens.MemoryScreen(vm) }
                     }
                 }
             }
@@ -237,6 +239,7 @@ fun AppRoot(vm: AppViewModel) {
                         composable("extensions") { ai.devcodex.agent.ui.screens.ExtensionsScreen(vm) }
                         composable("settings") { SettingsScreen(vm) }
                             composable("terminal") { ai.devcodex.agent.ui.screens.TerminalScreen(vm) }
+                        composable("memory") { ai.devcodex.agent.ui.screens.MemoryScreen(vm) }
                     }
                 }
             }

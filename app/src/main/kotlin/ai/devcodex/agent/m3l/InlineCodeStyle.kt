@@ -45,7 +45,7 @@ internal fun applyInlineCodeStyle(
     // CodeSpan. Recover those inline-code ranges from the original markdown
     // so table cells receive the same styling as normal paragraphs.
     val inlineCodeContents = sourceMarkdown
-        ?.let { INLINE_CODE_PATTERN.findAll(it).map { match -> match.groupValues[1] }.toList() }
+        ?.let { INLINE_CODE_PATTERN.findAll(it).map { match -> match.groupValues[2] }.toList() }
         .orEmpty()
     inlineCodeContents.forEach { code ->
         var searchStart = 0
@@ -72,7 +72,10 @@ internal fun applyInlineCodeStyle(
     }
 }
 
-private val INLINE_CODE_PATTERN = Regex("(?<!`)`([^`\\n]+)`(?!`)")
+// v0.4.15：行内代码支持 ``双反引号`` 包裹（内含单 ` 的嵌套场景，装机截图实锤
+// "code span 内的 ` 内 CSS" 解析残缺）。group1=内容（与旧用法兼容），匹配两种形态：
+// `xxx` 与 ``x`y``（围栏比内容围栏长即可成对）
+private val INLINE_CODE_PATTERN = Regex("(?<!`)(`+)([^`\n]+?)\\1(?!`)")
 
 /** Keep real text spans so long code can wrap and selection/copy retains the original text. */
 private class RoundedInlineCodeSpan(

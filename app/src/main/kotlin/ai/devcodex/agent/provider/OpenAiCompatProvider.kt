@@ -62,12 +62,126 @@ object OpenAiCompatProvider {
                 put("tool_choice", "auto")
             }
         }
-        return Request.Builder()
-            .url("${p.endpoint()}/chat/completions")
-            .addHeader("Authorization", "Bearer ${ai.devcodex.agent.data.KeyRotator.acquire(p)}")
-            .addHeader("Content-Type", "application/json")
-            .post(jsonBody(body))
-            .build()
+        // v0.4.15 Issue#3：API 格式路由
+        return when (p.apiStyle) {
+            "responses" -> {
+                val url = if (p.baseUrl.trimEnd('/').endsWith("/responses")) p.baseUrl.trimEnd('/')
+                          else "${p.endpoint()}/responses"
+                val rbody = buildResponsesBody(model, turns, tools, stream, reasoningEffort)
+                Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer ${ai.devcodex.agent.data.KeyRotator.acquire(p)}")
+                    .addHeader("Content-Type", "application/json")
+                    .post(jsonBody(rbody))
+                    .build()
+            }
+            "raw" -> Request.Builder()
+                .url(p.baseUrl.trimEnd('/'))
+                .addHeader("Authorization", "Bearer ${ai.devcodex.agent.data.KeyRotator.acquire(p)}")
+                .addHeader("Content-Type", "application/json")
+                .post(jsonBody(body))
+                .build()
+            else -> Request.Builder()
+                .url("${p.endpoint()}/chat/completions")
+                .addHeader("Authorization", "Bearer ${ai.devcodex.agent.data.KeyRotator.acquire(p)}")
+                .addHeader("Content-Type", "application/json")
+                .post(jsonBody(body))
+                .build()
+        }
+    }
+
+    /** v0.4.15：OpenAI Responses API 请求体（input 项格式） */
+    private fun buildResponsesBody(model: String, turns: List<ChatTurn>, tools: List<JsonObject>, stream: Boolean, reasoningEffort: String): JsonObject {
+        val input = buildJsonArray {
+            turns.forEach { t ->
+                when {
+                    t.role == "assistant" && t.toolCalls.isNotEmpty() -> {
+                        if (t.content.isNotBlank()) add(buildJsonObject {
+                            put("type", "message")
+                            put("role", "assistant")
+                            put("content", buildJsonArray { add(buildJsonObject { put("type", "output_text"); put("text", t.content) }) })
+                        })
+                        t.toolCalls.forEach { tc ->
+                            add(buildJsonObject {
+                                put("type", "function_call")
+                                put("call_id", tc.id)
+                                put("name", tc.name)
+                                put("arguments", tc.argsJson)
+                            })
+                        }
+                    }
+                    t.role == "tool" -> add(buildJsonObject {
+                        put("type", "function_call_output")
+                        put("call_id", t.toolCallId ?: "")
+                        put("output", t.content)
+                    })
+                    else -> {
+                        if (t.role == "user" && t.images.isNotEmpty()) {
+                            add(buildJsonObject {
+                                put("role", "user")
+                                put("content", buildJsonArray {
+                                    if (t.content.isNotBlank()) add(buildJsonObject { put("type", "input_text"); put("text", t.content) })
+                                    t.images.forEach { im -> add(buildJsonObject { put("type", "input_image"); put("image_url", "data:${im.mime};base64,${im.base64}") }) }
+                                })
+                            })
+                        } else add(buildJsonObject {
+                            put("role", t.role)
+                            put("content", buildJsonArray { add(buildJsonObject { put("type", "input_text"); put("text", t.content) }) })
+                        })
+                    }
+                }
+            }
+        }
+        return buildJsonObject {
+            put("model", model)
+            put("input", input)
+            put("stream", stream)
+            if (reasoningEffort.isNotBlank()) put("reasoning", buildJsonObject { put("effort", reasoningEffort) })
+            if (tools.isNotEmpty()) {
+                put("tools", buildJsonArray {
+                    tools.forEach { t -> add(buildJsonObject {
+                        put("type", "function"); put("name", t["name"] ?: JsonNull); put("description", t["description"] ?: JsonNull)
+                        put("parameters", t["parameters"] ?: JsonNull)
+                    }) }
+                })
+                put("tool_choice", "auto")
+            }
+        }
+    }
+
+    /** v0.4.15：Responses API 事件解析（output_text.delta / function_call / completed） */
+    private fun parseResponsesEvent(evtType: String, obj: kotlinx.serialization.json.JsonObject): List<StreamEvent> {
+        val events = mutableListOf<StreamEvent>()
+        when (evtType) {
+            "response.output_text.delta" -> {
+                val d = (obj["delta"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull ?: ""
+                if (d.isNotEmpty()) events.add(StreamEvent.Delta(d))
+            }
+            "response.reasoning_text.delta", "response.reasoning.delta" -> {
+                val d = (obj["delta"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull ?: ""
+                if (d.isNotEmpty()) events.add(StreamEvent.Reasoning(d))
+            }
+            "response.output_item.done" -> {
+                val item = obj["item"] as? kotlinx.serialization.json.JsonObject ?: return events
+                val itemType = (item["type"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+                if (itemType == "function_call") {
+                    val id = (item["call_id"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+                    val name = (item["name"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+                    val args = (item["arguments"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull ?: ""
+                    events.add(StreamEvent.ToolCallDelta(0, id, name, args))
+                }
+            }
+            "response.completed" -> {
+                val usage = obj["response"] as? kotlinx.serialization.json.JsonObject
+                (usage?.get("usage") as? kotlinx.serialization.json.JsonObject)?.let { u ->
+                    val it2 = (u["input_tokens"] as? kotlinx.serialization.json.JsonPrimitive)?.longOrNull ?: 0
+                    val ot = (u["output_tokens"] as? kotlinx.serialization.json.JsonPrimitive)?.longOrNull ?: 0
+                    events.add(StreamEvent.Usage(it2, ot, 0))
+                }
+                events.add(StreamEvent.Done("stop"))
+            }
+        }
+        return events
     }
 
     /** SSE 行 → 事件流 */
@@ -77,6 +191,9 @@ object OpenAiCompatProvider {
         if (data == "[DONE]" || data == "null" || data.isBlank()) return emptyList()
         val obj = runCatching { LlmJson.parseToJsonElement(data) }.getOrNull()
             as? kotlinx.serialization.json.JsonObject ?: return emptyList()
+        // v0.4.15 Issue#3：Responses API 流事件自动识别（type 以 response. 开头）
+        val evtType = (obj["type"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+        if (evtType != null && evtType.startsWith("response.")) return parseResponsesEvent(evtType, obj)
         val events = mutableListOf<StreamEvent>()
         // usage（部分服务在最后一个 chunk 带；字段可能为 null，逐个防御）
         (obj["usage"] as? kotlinx.serialization.json.JsonObject)?.let { u ->

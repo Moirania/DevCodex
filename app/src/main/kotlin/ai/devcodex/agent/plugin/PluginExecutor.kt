@@ -95,10 +95,18 @@ object PluginExecutor {
             val url = JsonArg.string(argsJson, "url") ?: return@withContext "ERROR: 缺少 url"
             val method = (JsonArg.string(argsJson, "method") ?: "GET").uppercase()
             val builder = Request.Builder().url(url)
-            JsonArg.string(argsJson, "headers")?.let { h ->
-                runCatching { json.parseToJsonElement(h).jsonObject }.getOrNull()?.forEach { (k, v) ->
-                    builder.addHeader(k, v.jsonPrimitive.contentOrNull ?: v.toString())
-                }
+            // v0.4.15 修 Issue#4：headers 模型可能传 JSON 对象（崩溃根源：按 string 取 JsonObject 必炸）
+            // 两种都支持：对象直接展开；字符串则再 parse（旧逻辑）
+            val headersEl = JsonArg.parse(argsJson)
+                ?.let { it as? kotlinx.serialization.json.JsonObject }?.get("headers")
+            val headersObj: kotlinx.serialization.json.JsonObject? = when {
+                headersEl is kotlinx.serialization.json.JsonObject -> headersEl
+                headersEl?.jsonPrimitive?.contentOrNull?.isNotBlank() == true ->
+                    runCatching { json.parseToJsonElement(headersEl.jsonPrimitive.content).jsonObject }.getOrNull()
+                else -> null
+            }
+            headersObj?.forEach { (k, v) ->
+                builder.addHeader(k, v.jsonPrimitive.contentOrNull ?: v.toString())
             }
             val body = JsonArg.string(argsJson, "body")
             if (method == "GET" || (method == "DELETE" && body == null)) {

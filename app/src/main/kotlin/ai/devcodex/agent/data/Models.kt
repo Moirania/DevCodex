@@ -20,6 +20,11 @@ data class ProviderConfig(
     val name: String = "",
     val type: ProviderType = ProviderType.OPENAI_COMPAT,
     val baseUrl: String = "",
+    // v0.4.15 Issue#3：API 格式——chat（拼 /chat/completions）| responses（拼 /responses，
+    // OpenAI Responses API 格式）| raw（baseUrl 原样发出，不拼任何后缀）
+    val apiStyle: String = "chat",
+    // v0.4.15：模型级上下文长度覆盖（模型 ID → 上下文 token 数；0/缺省=用注册表默认）
+    val modelCtx: Map<String, Long> = emptyMap(),
     val apiKey: String = "",
     // v0.4.10 Key 轮转池：同一供应商多个 key 自动轮转（429/超限自动冷却切换）
     val apiKeys: List<KeyEntry> = emptyList(),

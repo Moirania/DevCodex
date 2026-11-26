@@ -536,24 +536,7 @@ fun InputBar(
                     Icon(Icons.Filled.ArrowDropDown, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.width(8.dp))
-                // 上下文档位胶囊（模型旁）
-                Row(
-                    Modifier.background(MaterialTheme.colorScheme.secondaryContainer, RoundedCornerShape(50)).padding(1.dp),
-                    horizontalArrangement = Arrangement.spacedBy(1.dp),
-                ) {
-                    listOf(0 to "默认", 262144 to "256k", 1048576 to "1M").forEach { (opt, label) ->
-                        val support = opt == 0 || opt <= modelMaxCtx
-                        Box(
-                            Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(if (curCtx == opt && support) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Transparent)
-                                .clickable(enabled = support) { onCtx(opt) }
-                                .padding(horizontal = 8.dp, vertical = 3.dp),
-                        ) {
-                            Text(label, style = MaterialTheme.typography.labelSmall, color = if (curCtx == opt && support) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
+                // v0.4.15：上下文档位胶囊移除（用户要求收纳——上下文长度改到提供商模型列表单独设置）
                 if (running) {
                     Spacer(Modifier.width(8.dp))
                     Text("● 运行中", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)

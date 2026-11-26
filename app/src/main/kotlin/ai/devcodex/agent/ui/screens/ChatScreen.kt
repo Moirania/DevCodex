@@ -407,6 +407,11 @@ fun ChatScreen(vm: AppViewModel) {
                                     leadingIcon = { Icon(Icons.Filled.Dvr, null) },
                                     onClick = { showMore = false; vm.navRequest.value = "terminal" },
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("记忆") },
+                                    leadingIcon = { Icon(Icons.Filled.Memory, null, Modifier.size(18.dp)) },
+                                    onClick = { showMore = false; vm.navRequest.value = "memory" },
+                                )
                             }
                         }
                     },
@@ -646,7 +651,12 @@ fun ChatScreen(vm: AppViewModel) {
                     if (messages.isEmpty()) item { EmptyHint(onExample = { input = it }) }
                 }
                 val curModelId = session?.modelId ?: settings.providers.firstOrNull { it.enabled }?.enabledModels?.firstOrNull { ai.devcodex.agent.provider.ModelRegistry.isChatModel(it) } ?: ""
-                val modelMaxCtx2 = ai.devcodex.agent.provider.ModelRegistry.lookup(curModelId).contextLength ?: Int.MAX_VALUE
+                val modelMaxCtx2 = run {
+        // v0.4.15：模型级覆盖优先（提供商页可对单个模型设置上下文长度）
+        val prov = settings.providers.find { it.id == session?.providerId }
+        val ov = prov?.modelCtx?.get(curModelId) ?: 0L
+        if (ov > 0) ov.toInt() else ai.devcodex.agent.provider.ModelRegistry.lookup(curModelId).contextLength ?: Int.MAX_VALUE
+    }
                 // 斜杠命令建议浮层（输入以 / 开头）
                 if (input.startsWith("/") && input.length <= 24 && !input.contains(" ")) {
                     val skills = remember { runCatching { ai.devcodex.agent.data.SkillRepo(cmdCtx).list() }.getOrDefault(emptyList()) }

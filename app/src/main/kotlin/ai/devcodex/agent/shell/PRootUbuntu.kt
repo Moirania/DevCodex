@@ -102,7 +102,10 @@ object PRootUbuntu {
             runCatching {
                 val lexDir = File(File(ctx.filesDir, "usr"), "libexec/proot").apply { mkdirs() }
                 val loader = File(lexDir, "loader")
-                if (!loader.exists()) ctx.assets.open("proot/loader").use { input -> loader.outputStream().use { input.copyTo(it) } }
+                if (!loader.exists()) {
+                    ctx.assets.open("proot/loader").use { input -> loader.outputStream().use { input.copyTo(it) } }
+                    loader.setExecutable(true, false)  // v0.4.15：loader 无执行位 → execve EACCES
+                }
             }
             // rootfs（大文件解压一次）：纯 Java 流式 GZIP+tar，不依赖系统 toybox tar
             // （装机实测 vivo Android 11 上 toybox tar 解压失败 → rootfs 目录空、沙箱从未就绪）
@@ -175,6 +178,14 @@ object PRootUbuntu {
             val p = ProcessBuilder(proot, "-r", root.absolutePath, "-b", "/dev", "-b", "/proc", "/bin/true")
                 .redirectErrorStream(true).apply {
                     environment()["LD_LIBRARY_PATH"] = prootLibDir + ":" + termuxLib
+                    // v0.4.15 真修：Termux 版 proot 二进制烤死 com.termux 的 tmp/loader 路径（strings 实锤）。
+                    // PROOT_TMP_DIR→本 app 可写 cache；PROOT_LOADER→本 app 已布置的 loader（usr/libexec/proot/loader）
+                    environment()["PROOT_TMP_DIR"] = File(ctx.cacheDir, "proot-tmp").apply { mkdirs() }.absolutePath
+                    val loader = File(File(ctx.filesDir, "usr"), "libexec/proot/loader")
+                    if (loader.isFile) {
+                        environment()["PROOT_LOADER"] = loader.absolutePath
+                        environment()["PROOT_LOADER32"] = loader.absolutePath
+                    }
                 }.start()
             // v0.4.12 用户要求：proot 原始返回数据全量进日志（stdout+stderr+exit code）
             val out = p.inputStream.bufferedReader().use { it.readText().take(2000) }
@@ -214,14 +225,20 @@ object PRootUbuntu {
         return runCatching {
             // 前置探测：seccomp 设备直接给明确死因，不再让模型反复撞 execve Permission denied
             if (!probeProot(ctx, proot, root)) {
-                return "ERROR: 此设备 ROM 的 seccomp 过滤器禁止 proot 所需的 ptrace 调用，Ubuntu 沙箱在本机不可用（Termux 沙箱不受影响，命令可改用 linux_exec 执行）"
+                return "ERROR: proot 探测失败（看 PRoot:probe raw 日志行）。Termux 沙箱不受影响，命令可改用 linux_exec 执行"
             }
             val bash = File(ctx.filesDir, "usr/bin/bash")
             val pb = if (bash.exists()) ProcessBuilder(bash.absolutePath, "-c", full) else ProcessBuilder("sh", "-c", full)
             val prootLibDir = File(ctx.filesDir, "proot-bin").absolutePath
             pb.redirectErrorStream(true).apply {
                 // proot-bin 优先：proot 自身动态依赖 talloc/shmem/termux-exec 全部自带
-                environment()["PROOT_TMP_DIR"] = java.io.File(ctx.cacheDir, "proot-tmp").apply { mkdirs() }.absolutePath  // v0.4.14 修烤死 tmp
+                environment()["PROOT_TMP_DIR"] = java.io.File(ctx.cacheDir, "proot-tmp").apply { mkdirs() }.absolutePath
+                // v0.4.15：loader 也指到本 app 布置位（proot 烤死 com.termux 路径）
+                val loader = java.io.File(java.io.File(ctx.filesDir, "usr"), "libexec/proot/loader")
+                if (loader.isFile) {
+                    environment()["PROOT_LOADER"] = loader.absolutePath
+                    environment()["PROOT_LOADER32"] = loader.absolutePath
+                }
                 environment()["LD_LIBRARY_PATH"] = prootLibDir + ":" + termuxLib + ":" + (System.getenv("LD_LIBRARY_PATH") ?: "")
                 environment()["PATH"] = File(ctx.filesDir, "usr/bin").absolutePath + ":/system/bin:/system/xbin"
                 // proot 临时目录默认 /tmp（不存在），指向 cache

@@ -197,7 +197,8 @@ fun CodeBlockBody(
             ) {
                 Column(
                     modifier = Modifier
-                        .horizontalScroll(horizontalState)
+                        // v0.4.15：移动端软换行替代横向滚动（装机两次反馈"行尾截断"）。
+                        // 每行 BasicText 自然换行，行号列仍在左侧（VSCode 软换行式观感）
                         .then(if (fillHeight) Modifier.fillMaxHeight() else Modifier.wrapContentHeight())
                 ) {
                     highlightedLines.forEach { line ->
@@ -345,8 +346,10 @@ private fun normalizeCodeLanguage(label: String): String {
         "c#", "cs" -> "csharp"
         "golang" -> "go"
         "rs" -> "rust"
-        "sh", "zsh", "shell", "shellscript" -> "shellscript"
-        "bash", "pwsh", "ps1" -> "powershell"
+        // v0.4.15 修：此前 sh→shellscript / bash→powershell 映射的文件根本不存在（assets 只有
+        // shell.tmLanguage.json）→ 全部 fallback 无高亮（装机截图实锤"代码块全部同色"）
+        "sh", "zsh", "shell", "shellscript", "bash", "console", "terminal" -> "shell"
+        "pwsh", "ps1", "powershell" -> "powershell"
         "htm" -> "html"
         "yml" -> "yaml"
         "pl", "perl" -> "perl"
