@@ -279,16 +279,26 @@ object TermuxRuntime {
     @Volatile private var prootOk: Boolean? = null
     private fun prootUsable(context: Context): Boolean {
         prootOk?.let { return it }
+        // v0.4.16：全面转 PRootEnv（nativeLibraryDir 二进制 + 干净环境 + 真实输出进日志）。
+        // 旧实现三连错：proot-bin 旧路径 / -r usr 下跑 /usr/bin/true（实际找 usr/usr/bin） / 吞真实报错
         val ok = runCatching {
             val usr = prefix(context)
-            val proot = File(context.filesDir, "proot-bin/proot").absolutePath
-            val libs = File(context.filesDir, "proot-bin").absolutePath + ":" + File(usr, "lib").absolutePath
-            val p = ProcessBuilder(proot, "-r", usr.absolutePath, "-b", "/dev", "-b", "/proc", "-b", "/system", "/usr/bin/true")
-                .redirectErrorStream(true).apply { environment()["LD_LIBRARY_PATH"] = libs }.start()
-            p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS) && p.exitValue() == 0
+            val pb = ProcessBuilder(
+                PRootEnv.prootBinary(context).absolutePath,
+                "-r", usr.absolutePath, "-b", "/dev", "-b", "/proc", "-b", "/system",
+                "--link2symlink", "/bin/true"
+            ).redirectErrorStream(true)
+            PRootEnv.applyHostEnvironment(context, pb)
+            // Termux bionic 客体需要 Termux 库目录（追加在 PRootEnv 路径之后）
+            pb.environment()["LD_LIBRARY_PATH"] = pb.environment()["LD_LIBRARY_PATH"] + ":" + File(usr, "lib").absolutePath
+            val p = pb.start()
+            val out = p.inputStream.bufferedReader().use { it.readText().take(600) }
+            val done = p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+            val code = if (done) p.exitValue() else { p.destroyForcibly(); -1 }
+            ai.devcodex.agent.util.DebugLog.i("Termux", "proot probe exit=$code out=[${out.replace("\n", " | ")}]")
+            code == 0
         }.getOrDefault(false)
         prootOk = ok
-        ai.devcodex.agent.util.DebugLog.i("Termux", "proot probe: ${if (ok) "OK" else "BLOCKED (ROM 禁 ptrace?)"}")
         return ok
     }
 
@@ -307,30 +317,27 @@ object TermuxRuntime {
         val aptLike = Regex("\\b(apt|apt-get|apt-cache|dpkg|pkg)\\b").containsMatchIn(command)
         var useProotWrap = false
         if (aptLike) {
-            val prootBin = File(context.filesDir, "proot-bin/proot")
-            if (!prootBin.exists()) {
-                runCatching {
-                    File(context.filesDir, "proot-bin").apply { mkdirs() }
-                    context.assets.open("proot/proot").use { input -> prootBin.outputStream().use { input.copyTo(it) } }
-                    prootBin.setExecutable(true)
-                }
-            }
-            // v0.4.9：proot 二进制存在 ≠ 可用——vivo 类 ROM seccomp 禁 ptrace，proot 被 SIGSYS 杀
-            // （装机实锤 exit=159）。真跑一次探测（进程级缓存），失败则不包装（直跑虽败但错误可读）
-            useProotWrap = prootBin.exists() && prootUsable(context)
-            if (!useProotWrap) ai.devcodex.agent.util.DebugLog.w("Termux", "apt 命令但 proot 不可用（二进制缺失或 ROM 禁 ptrace），直跑")
+            // v0.4.16：PRootEnv 接管（nativeLibraryDir 二进制），坏 JSON/环境同步修
+            useProotWrap = runCatching { prootUsable(context) }.getOrDefault(false)
+            if (!useProotWrap) ai.devcodex.agent.util.DebugLog.w("Termux", "apt 命令但 proot 不可用（看上方 probe 日志），直跑")
         }
         return try {
             // bash 优先（bionic：系统 linker + env；Operit 同款方式）
             val bash = File(usr, "bin/bash")
             val pb = when {
                 useProotWrap -> {
-                    // proot 包装：guest 里 /data/data/com.termux/files/usr → 真 $usr，编译期路径全部自愈
-                    val proot = File(context.filesDir, "proot-bin/proot").absolutePath
+                    // v0.4.16：直接 ProcessBuilder(List) 启动（去掉 ld-musl+busybox 外层包装——
+                    // 超时只杀外层残留 proot 的根因），--link2symlink 修 dpkg 硬链
                     val inner = wrapped.replace("'", "'\\''")
-                    ProcessBuilder(loader, bb, "sh", "-c",
-                        proot + " -b " + usr.absolutePath + ":/data/data/com.termux/files/usr -b /dev -b /proc -b " + ws + ":/workspace" +
-                            " -w '" + workDir + "' " + (bash.takeIf { it.exists() }?.absolutePath ?: (bb + " sh")) + " -c '" + inner + "'")
+                    ProcessBuilder(
+                        PRootEnv.prootBinary(context).absolutePath,
+                        "-b", usr.absolutePath + ":/data/data/com.termux/files/usr",
+                        "-b", "/dev", "-b", "/proc",
+                        "-b", ws + ":/workspace",
+                        "--link2symlink",
+                        "-w", workDir,
+                        (bash.takeIf { it.exists() }?.absolutePath ?: (bb + " sh")), "-c", inner
+                    )
                 }
                 !forceBusybox && !bashBlockedByRom && bash.exists() && File(usr, "lib/libreadline.so.8").exists() ->
                     ProcessBuilder(bash.absolutePath, "-c", wrapped)
@@ -347,7 +354,7 @@ object TermuxRuntime {
                     // PREFIX：Termux 程序（pkg/apt/proot 等）定位自身前缀的惯例变量（装机实测模型被迫手工 export 的根因）
                     env["PREFIX"] = usr.absolutePath
                     // proot-bin 前置：直接运行 proot 二进制无需手工补库
-                    env["LD_LIBRARY_PATH"] = File(context.filesDir, "proot-bin").absolutePath + ":" + File(usr, "lib").absolutePath
+                    env["LD_LIBRARY_PATH"] = runCatching { PRootEnv.libraryPath(context) }.getOrDefault(File(usr, "lib").absolutePath) + ":" + File(usr, "lib").absolutePath
                     env["HOME"] = File(usr, "home").absolutePath
                     File(usr, "home").mkdirs()
                     env["TMPDIR"] = File(usr, "tmp").absolutePath

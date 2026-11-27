@@ -21,8 +21,8 @@ android {
         applicationId = "ai.devcodex.agent"
         minSdk = 26
         targetSdk = 28
-        versionCode = 104
-        versionName = "0.4.15"
+        versionCode = 105
+        versionName = "0.4.16"
     }
 
     splits {
@@ -79,6 +79,10 @@ android {
     }
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        jniLibs {
+            useLegacyPackaging = true   // v0.4.16：PRoot 走 jniLibs（nativeLibraryDir 全 ROM 执行豁免区）
+            keepDebugSymbols += "**/*.so"
+        }
     }
 }
 

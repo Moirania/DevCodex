@@ -11,7 +11,8 @@ import okhttp3.Request
 object OpenAiCompatProvider {
 
     fun chatRequest(p: ProviderConfig, model: String, turns: List<ChatTurn>, tools: List<JsonObject>, stream: Boolean, reasoningEffort: String = ""): Request {
-        val messages = turns.map { t ->
+        val cleanTurns = sanitizeTurns(turns)
+        val messages = cleanTurns.map { t ->
             buildJsonObject {
                 put("role", t.role)
                 when {
@@ -67,7 +68,7 @@ object OpenAiCompatProvider {
             "responses" -> {
                 val url = if (p.baseUrl.trimEnd('/').endsWith("/responses")) p.baseUrl.trimEnd('/')
                           else "${p.endpoint()}/responses"
-                val rbody = buildResponsesBody(model, turns, tools, stream, reasoningEffort)
+                val rbody = buildResponsesBody(model, cleanTurns, tools, stream, reasoningEffort)
                 Request.Builder()
                     .url(url)
                     .addHeader("Authorization", "Bearer ${ai.devcodex.agent.data.KeyRotator.acquire(p)}")
@@ -87,6 +88,30 @@ object OpenAiCompatProvider {
                 .addHeader("Content-Type", "application/json")
                 .post(jsonBody(body))
                 .build()
+        }
+    }
+
+    /** v0.4.16：历史消息消毒（修装机实锤 400/502 群）
+     * ①截断的 tool call args（流断在 JSON 中间）→ "arguments must be valid JSON" 400
+     * ②孤儿 tool call（无对应 tool 响应）→ "No tool output found" 502 */
+    private fun sanitizeTurns(turns: List<ChatTurn>): List<ChatTurn> {
+        val answered = turns.filter { it.role == "tool" }.mapNotNull { it.toolCallId }.toHashSet()
+        return turns.mapNotNull { t ->
+            when {
+                t.role == "assistant" && t.toolCalls.isNotEmpty() -> {
+                    val kept = t.toolCalls
+                        .map { tc ->
+                            val argsOk = runCatching { LlmJson.parseToJsonElement(tc.argsJson) }.getOrNull() != null
+                            if (argsOk) tc else tc.copy(argsJson = "{}")
+                        }
+                        .filter { tc -> answered.contains(tc.id) }   // 孤儿调用剔除
+                    if (kept.isEmpty()) {
+                        // 全部孤儿：退化纯文本 assistant（保留 content）
+                        t.copy(toolCalls = emptyList())
+                    } else t.copy(toolCalls = kept)
+                }
+                else -> t
+            }
         }
     }
 

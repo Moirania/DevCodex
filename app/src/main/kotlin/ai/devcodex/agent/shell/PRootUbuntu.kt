@@ -11,28 +11,24 @@ import java.io.File
  */
 object PRootUbuntu {
     private var initialized = false
+    @Volatile private var prootBroken: Boolean? = null
+    @Volatile private var useNoSeccomp: Boolean = false
+    @Volatile private var lastProbeError: String? = null
+    @Volatile private var ensureFatal: String? = null
 
     fun rootfsDir(ctx: Context): File = File(ctx.filesDir, "ubuntu")
 
     /** 状态透出（v0.4.6）：就绪 / 未初始化 / 失败原因（含 ptrace 物理限制）——设置状态卡与工具报错共用 */
     fun status(ctx: Context): Pair<Boolean, String?> {
-        val ready = rootfsDir(ctx).resolve("bin").exists() && File(ctx.filesDir, "proot-bin/proot").exists()
+        val ready = rootfsDir(ctx).resolve(".devcodex_ready").isFile &&
+            rootfsDir(ctx).resolve("bin").exists() &&
+            runCatching { PRootEnv.prootReady(ctx) }.getOrDefault(false)
         return when {
             ready && prootBroken == false -> true to null
-            prootBroken == true -> false to "此设备 ROM 禁用 ptrace（seccomp），PRoot 无法运行——Ubuntu 沙箱在此设备上不可用，Termux 通道不受影响"
+            prootBroken == true -> false to (lastProbeError ?: "PRoot 探测失败")
+            ready && prootBroken == null -> false to "rootfs 已就绪（待首次运行验证）"
             else -> false to ensureFatal
         }
-    }
-
-    /** v0.4.12：ensure 失败原因查询（供 linuxExec 降级时记录） */
-    fun fatalReason(): String = ensureFatal ?: "unknown"
-
-    /** 重试（v0.4.6）：清失败缓存 + readyMark，下次 ensure 重新解压 rootfs（约 1 分钟） */
-    fun resetAndRetry(ctx: Context) {
-        ensureFatal = null
-        prootBroken = null
-        initialized = false
-        File(rootfsDir(ctx), ".devcodex_ready").delete()
     }
 
     /**
@@ -79,45 +75,37 @@ object PRootUbuntu {
     }
 
     /** 首次解压 proot 二进制 + rootfs（~80MB 解压后），进度回调 0..100 */
+    /** v0.4.12：ensure 失败原因查询（供 linuxExec 降级时记录） */
+    fun fatalReason(): String = ensureFatal ?: "unknown"
+
+    /** 重试（v0.4.6）：清失败缓存 + readyMark，下次 ensure 重新解压 rootfs（约 1 分钟） */
+    fun resetAndRetry(ctx: Context) {
+        ensureFatal = null
+        prootBroken = null
+        lastProbeError = null
+        useNoSeccomp = false
+        initialized = false
+        File(rootfsDir(ctx), ".devcodex_ready").delete()
+    }
+
+    @Synchronized
     fun ensure(ctx: Context, onProgress: (Int) -> Unit = {}): Boolean {
         if (initialized && rootfsDir(ctx).resolve("bin").exists()) return true
-        // 失败缓存（进程级）：初始化/解压失败后不再重试——否则每次调用都重解 80MB rootfs
         ensureFatal?.let { return false }
         return runCatching {
-            val prootDir = File(ctx.filesDir, "proot-bin").apply { mkdirs() }
-            // proot 二进制 + 依赖库（talloc/shmem/termux-exec + rootfs loader，全部自带，不依赖 Termux）
-            val prootBin = File(prootDir, "proot")
-            if (!prootBin.exists()) {
-                ctx.assets.open("proot/proot").use { input -> prootBin.outputStream().use { input.copyTo(it) } }
-                prootBin.setExecutable(true)
-            }
-            // proot 动态依赖：libtalloc.so.2 / libandroid-shmem.so / libtermux-exec-ld-preload.so（Termux 官方 aarch64）
-            listOf("libtalloc.so.2", "libandroid-shmem.so", "libtermux-exec-ld-preload.so").forEach { lib ->
-                val f = File(prootDir, lib)
-                if (!f.exists()) runCatching {
-                    ctx.assets.open("proot/$lib").use { input -> f.outputStream().use { input.copyTo(it) } }
-                }
-            }
-            // proot rootfs exec loader（放 usr/libexec/proot/，proot 默认查找路径）
-            runCatching {
-                val lexDir = File(File(ctx.filesDir, "usr"), "libexec/proot").apply { mkdirs() }
-                val loader = File(lexDir, "loader")
-                if (!loader.exists()) {
-                    ctx.assets.open("proot/loader").use { input -> loader.outputStream().use { input.copyTo(it) } }
-                    loader.setExecutable(true, false)  // v0.4.15：loader 无执行位 → execve EACCES
-                }
-            }
-            // rootfs（大文件解压一次）：纯 Java 流式 GZIP+tar，不依赖系统 toybox tar
-            // （装机实测 vivo Android 11 上 toybox tar 解压失败 → rootfs 目录空、沙箱从未就绪）
+            // v0.4.16：二进制已迁 jniLibs（nativeLibraryDir 全 ROM 执行豁免区）——不再拷贝 assets，
+            // 启动前校验依赖完整（缺即 fail-fast 带明确原因）
+            PRootEnv.libraryPath(ctx)
+            PRootEnv.loaderBinary(ctx)
+
             val root = rootfsDir(ctx)
             val readyMark = File(root, ".devcodex_ready")
             if (!readyMark.exists() || !root.resolve("bin").exists()) {
-                root.mkdirs()
+                // v0.4.16：staging 原子解压（修并发/中断残缺目录）——解到临时目录，
+                // 校验 bin/sh 完整后删旧目录并改名
+                val staging = File(ctx.filesDir, "ubuntu.staging")
+                staging.deleteRecursively(); staging.mkdirs()
                 onProgress(5)
-                // v0.4.12 根修：AAPT2 打包会把 .gz 后缀剥掉（解压存成 assets/ubuntu-rootfs.tar，
-                // 装机 open("...tar.gz") 直接 FileNotFoundException → rootfs 从未解压的元凶）。
-                // 嗅探流魔数自适应：1f 8b = gzip 流套 GZIPInputStream，否则当裸 tar
-                // v0.4.12b：AAPT2 会把 .gz 后缀解压重命名（.gz→.tar 剥后缀）——资产改名 .bin 绕开
                 val names = listOf("ubuntu-rootfs.bin", "ubuntu-rootfs.tar.gz", "ubuntu-rootfs.tar")
                 var stream: java.io.InputStream? = null
                 var used = ""
@@ -129,146 +117,211 @@ object PRootUbuntu {
                     }
                 }
                 val raw = stream ?: error("APK 内找不到 Ubuntu rootfs 资产（$names）")
-                ai.devcodex.agent.util.DebugLog.i("PRoot", "rootfs asset=$used, 解压到 ${root.absolutePath}")
+                ai.devcodex.agent.util.DebugLog.i("PRoot", "rootfs asset=$used, 解压到 ${staging.absolutePath}")
                 val head = ByteArray(2)
                 runCatching { raw.mark(10); raw.read(head); raw.reset() }
                 val isGzip = head[0] == 0x1f.toByte() && head[1] == 0x8b.toByte()
-                ai.devcodex.agent.util.DebugLog.i("PRoot", "magic=${head.joinToString(",") { it.toString() }} gzip=$isGzip")
                 val tarIn: java.io.InputStream = if (isGzip) java.util.zip.GZIPInputStream(raw, 1 shl 16) else raw
                 var entries = 0
                 tarIn.use { ti ->
-                    extractTar(ti, root) { done, total ->
+                    extractTar(ti, staging) { done, total ->
                         entries = done
                         onProgress(5 + (90 * done / total.coerceAtLeast(1)))
                     }
                 }
-                ai.devcodex.agent.util.DebugLog.i("PRoot", "rootfs 解压完成 entries=$entries, bin exists=${root.resolve("bin").exists()}")
-                if (!root.resolve("bin").exists()) error("rootfs 解压后缺 /bin（entries=$entries）")
+                ai.devcodex.agent.util.DebugLog.i("PRoot", "staging 解压完成 entries=$entries, bin/sh=${staging.resolve("bin/sh").exists()}")
+                if (!staging.resolve("bin/sh").exists()) error("rootfs 解压后缺 /bin/sh（entries=$entries）")
+                root.deleteRecursively()
+                if (!staging.renameTo(root)) error("staging 改名失败")
                 onProgress(95)
                 readyMark.writeText("ok")
             }
-            // resolv.conf（联网）
-            runCatching {
-                File(root, "etc").mkdirs()
-                File(root, "etc/resolv.conf").writeText("nameserver 8.8.8.8\nnameserver 8.8.4.4\n")
-            }
+            // 客体网络：动态同步系统 DNS（v0.4.16，修写死 8.8.8.8 在受限网络超时）
+            syncDns(ctx, root)
+            // 宿主附加 GID 注入（v0.4.16，修 "cannot find name for group ID" 噪音）
+            syncHostGroups(root)
             initialized = true
             onProgress(100)
-            root.resolve("bin").exists()
+            // ensure 完成立即探测一次（状态机同步，修 status 误报）
+            probeProot(ctx, root)
+            true
         }.onFailure {
             ensureFatal = "初始化失败: ${it.message}"
             ai.devcodex.agent.util.DebugLog.e("PRoot", "ensure FAILED: ${it.message}", it)
         }.getOrDefault(false)
     }
 
-    /** proot 可用性缓存：null=未测，true=可用，false=设备 ROM seccomp 禁 ptrace 等 */
-    @Volatile
-    private var prootBroken: Boolean? = null
-
-    /** ensure 失败原因缓存（进程级）：失败后不再重试，避免每次调用重复解压 80MB rootfs */
-    @Volatile
-    private var ensureFatal: String? = null
-
-    /** 探测 proot 真实可用性：需 rootfs 就绪后跑 /bin/true（--version 不触发 ptrace，测不出 seccomp） */
-    private fun probeProot(ctx: Context, proot: String, root: File): Boolean {
-        prootBroken?.let { return !it }
-        val prootLibDir = File(ctx.filesDir, "proot-bin").absolutePath
-        val termuxLib = File(File(ctx.filesDir, "usr"), "lib").absolutePath
-        val ok = runCatching {
-            val p = ProcessBuilder(proot, "-r", root.absolutePath, "-b", "/dev", "-b", "/proc", "/bin/true")
-                .redirectErrorStream(true).apply {
-                    environment()["LD_LIBRARY_PATH"] = prootLibDir + ":" + termuxLib
-                    // v0.4.15 真修：Termux 版 proot 二进制烤死 com.termux 的 tmp/loader 路径（strings 实锤）。
-                    // PROOT_TMP_DIR→本 app 可写 cache；PROOT_LOADER→本 app 已布置的 loader（usr/libexec/proot/loader）
-                    environment()["PROOT_TMP_DIR"] = File(ctx.cacheDir, "proot-tmp").apply { mkdirs() }.absolutePath
-                    val loader = File(File(ctx.filesDir, "usr"), "libexec/proot/loader")
-                    if (loader.isFile) {
-                        environment()["PROOT_LOADER"] = loader.absolutePath
-                        environment()["PROOT_LOADER32"] = loader.absolutePath
-                    }
-                }.start()
-            // v0.4.12 用户要求：proot 原始返回数据全量进日志（stdout+stderr+exit code）
-            val out = p.inputStream.bufferedReader().use { it.readText().take(2000) }
-            val done = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
-            val code = if (done) p.exitValue() else { p.destroyForcibly(); -1 }
-            val verdict = when {
-                code == 0 -> "OK"
-                code == 159 -> "SIGSYS(159): ROM seccomp 禁 ptrace"
-                code == 13 -> "SIGPIPE?"
-                code == 139 -> "SIGSEGV: proot 崩溃（版本/ABI 问题）"
-                code == 127 -> "rootfs 缺 /bin/true（rootfs 未解压或损坏）"
-                code == -1 -> "20s 超时（挂死）"
-                else -> "exit=$code"
-            }
-            ai.devcodex.agent.util.DebugLog.i("PRoot", "probe raw exit=$code verdict=$verdict output=[${out.replace("\n", " | ").take(400)}]")
-            code == 0
-        }.getOrDefault(false)
-        prootBroken = ok.not()
-        if (!ok) ai.devcodex.agent.util.DebugLog.w("PRoot", "probe failed → ${ensureFatalOrProbeHint(root)}")
-        return ok
+    /** v0.4.16：动态同步 Android 活跃网络 DNS 到 /etc/resolv.conf（受限网络不再写死 8.8.8.8） */
+    private fun syncDns(ctx: Context, root: File) = runCatching {
+        val cm = ctx.getSystemService(android.net.ConnectivityManager::class.java)
+        val servers = cm?.activeNetwork
+            ?.let { cm.getLinkProperties(it) }
+            ?.dnsServers
+            .orEmpty()
+            .mapNotNull { it.hostAddress }
+            .distinct()
+        val content = if (servers.isNotEmpty()) {
+            servers.joinToString("\n", postfix = "\n") { "nameserver $it" }
+        } else {
+            "nameserver 223.5.5.5\nnameserver 8.8.8.8\n"
+        }
+        val resolv = File(root, "etc/resolv.conf")
+        resolv.parentFile?.mkdirs()
+        if (java.nio.file.Files.isSymbolicLink(resolv.toPath())) {
+            java.nio.file.Files.delete(resolv.toPath())
+        }
+        if (!resolv.isFile || resolv.readText() != content) {
+            resolv.writeText(content)
+        }
     }
-    private fun ensureFatalOrProbeHint(root: File): String =
-        if (!root.resolve("bin").exists()) "rootfs 未就绪（${ensureFatal ?: "bin 缺失"}）" else "ROM ptrace 限制或 proot 环境问题（看上方 probe raw 行）"
 
-    /** 在 Ubuntu 内执行命令（PRoot 用户空间） */
+    /** v0.4.16：宿主 supplementary GID 注入 /etc/group（修 cannot find name for group ID） */
+    private fun syncHostGroups(root: File) = runCatching {
+        val gids = File("/proc/self/status").readText().lineSequence()
+            .firstOrNull { it.startsWith("Groups:") }
+            ?.substringAfter(':')
+            ?.split(' ', '\t')
+            ?.mapNotNull(String::toIntOrNull)
+            ?.filter { it >= 0 }
+            ?.toSortedSet()
+            .orEmpty()
+        if (gids.isEmpty()) return@runCatching
+        val groupFile = File(root, "etc/group")
+        if (!groupFile.isFile) return@runCatching
+        val existing = groupFile.readText()
+        val configured = existing.lineSequence()
+            .mapNotNull { it.split(':').getOrNull(2)?.toIntOrNull() }
+            .toSet()
+        val missing = gids.filter { it !in configured }
+        if (missing.isEmpty()) return@runCatching
+        val suffix = buildString {
+            if (existing.isNotEmpty() && !existing.endsWith('\n')) append('\n')
+            missing.forEach { gid -> append("host_gid_$gid:x:$gid:\n") }
+        }
+        groupFile.appendText(suffix)
+    }
+
+    private fun runProbeOnce(ctx: Context, root: File, noSeccomp: Boolean): Pair<Int, String> {
+        val cmd = buildList {
+            add(PRootEnv.prootBinary(ctx).absolutePath)
+            addAll(listOf("-r", root.absolutePath, "-w", "/", "-0", "--link2symlink"))
+            listOf("/dev", "/proc", "/sys")
+                .filter { File(it).exists() }
+                .forEach { addAll(listOf("-b", "$it:$it")) }
+            addAll(listOf("/usr/bin/env", "-i", "PATH=/usr/bin:/bin", "/bin/true"))
+        }
+        val pb = ProcessBuilder(cmd).redirectErrorStream(true)
+        PRootEnv.applyHostEnvironment(ctx, pb, noSeccomp = noSeccomp)
+        val p = pb.start()
+        val out = StringBuilder()
+        val reader = Thread {
+            runCatching {
+                p.inputStream.bufferedReader().forEachLine {
+                    synchronized(out) { if (out.length < 4096) out.appendLine(it) }
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        val done = p.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
+        val code = if (done) p.exitValue() else { p.destroyForcibly(); -1 }
+        reader.join(500)
+        return code to synchronized(out) { out.toString().trim() }
+    }
+
+    private fun probeProot(ctx: Context, root: File): Boolean {
+        prootBroken?.let { return !it }
+        return try {
+            var (code, out) = runProbeOnce(ctx, root, noSeccomp = false)
+            ai.devcodex.agent.util.DebugLog.i("PRoot", "probe(default) exit=$code out=[${out.replace("\n", " | ").take(400)}]")
+            // SIGSYS(159)/seccomp 冲突 → PROOT_NO_SECCOMP=1 自动回退重试（此前直接判死刑）
+            if (code != 0 && (code == 159 || out.contains("seccomp", ignoreCase = true) || out.contains("SIGSYS", ignoreCase = true))) {
+                val retry = runProbeOnce(ctx, root, noSeccomp = true)
+                ai.devcodex.agent.util.DebugLog.i("PRoot", "probe(PROOT_NO_SECCOMP=1) exit=${retry.first} out=[${retry.second.replace("\n", " | ").take(400)}]")
+                if (retry.first == 0) {
+                    useNoSeccomp = true
+                    prootBroken = false
+                    lastProbeError = null
+                    return true
+                }
+                code = retry.first
+                out = retry.second
+            }
+            if (code == 0) {
+                prootBroken = false
+                lastProbeError = null
+                true
+            } else {
+                prootBroken = true
+                lastProbeError = "PRoot 探测失败 (exit=$code): ${out.take(240).ifBlank { "无输出" }}"
+                ai.devcodex.agent.util.DebugLog.w("PRoot", "probe failed → $lastProbeError")
+                false
+            }
+        } catch (t: Throwable) {
+            ai.devcodex.agent.util.DebugLog.e("PRoot", "probe exception", t)
+            prootBroken = true
+            lastProbeError = "PRoot 无法启动: ${t.message}"
+            false
+        }
+    }
+
+    /** 在 Ubuntu 内执行命令（v0.4.16 重构：直接 ProcessBuilder + env -i 隔离宿主环境） */
     fun exec(ctx: Context, command: String, timeoutSec: Int = 150): String {
         val root = rootfsDir(ctx)
-        val proot = File(ctx.filesDir, "proot-bin/proot").absolutePath
-        val termuxLib = File(ctx.filesDir, "usr/lib").absolutePath
-        val ws = ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().absolutePath
+        if (!ensure(ctx)) return "ERROR: Ubuntu rootfs 初始化失败（${fatalReason()}）"
+        if (!probeProot(ctx, root)) {
+            return "ERROR: ${lastProbeError ?: "PRoot 探测失败"}。Termux 通道不受影响，命令可改用 linux_exec 执行"
+        }
+
+        val ws = ai.devcodex.agent.tools.BuiltinTools.workspaceRoot().apply { mkdirs() }
         File(root, "root/workspace").mkdirs()
-        val quoted = "'" + command.replace("'", "'\\''") + "'"
-        val full = "$proot -r ${root.absolutePath} " +
-            "-b /dev -b /proc -b /sys -b /sdcard -b /data/local/tmp -b '$ws:/root/workspace' -b '${ctx.cacheDir.absolutePath}' " +
-            "-w /root/workspace -0 /usr/bin/env HOME=/root PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin " +
-            "/bin/sh -c $quoted"
+
+        val prootCmd = buildList {
+            add(PRootEnv.prootBinary(ctx).absolutePath)
+            addAll(listOf("-r", root.absolutePath, "-w", "/root/workspace", "-0", "--link2symlink"))
+            listOf("/dev", "/proc", "/sys")
+                .filter { File(it).exists() }
+                .forEach { addAll(listOf("-b", "$it:$it")) }
+            addAll(listOf("-b", "${ws.canonicalPath}:/root/workspace"))
+            addAll(listOf(
+                "/usr/bin/env", "-i",
+                "HOME=/root",
+                "USER=root",
+                "LOGNAME=root",
+                "TERM=xterm-256color",
+                "LANG=C.UTF-8",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "/bin/sh", "-c", command,
+            ))
+        }
+
         return runCatching {
-            // 前置探测：seccomp 设备直接给明确死因，不再让模型反复撞 execve Permission denied
-            if (!probeProot(ctx, proot, root)) {
-                return "ERROR: proot 探测失败（看 PRoot:probe raw 日志行）。Termux 沙箱不受影响，命令可改用 linux_exec 执行"
-            }
-            val bash = File(ctx.filesDir, "usr/bin/bash")
-            val pb = if (bash.exists()) ProcessBuilder(bash.absolutePath, "-c", full) else ProcessBuilder("sh", "-c", full)
-            val prootLibDir = File(ctx.filesDir, "proot-bin").absolutePath
-            pb.redirectErrorStream(true).apply {
-                // proot-bin 优先：proot 自身动态依赖 talloc/shmem/termux-exec 全部自带
-                environment()["PROOT_TMP_DIR"] = java.io.File(ctx.cacheDir, "proot-tmp").apply { mkdirs() }.absolutePath
-                // v0.4.15：loader 也指到本 app 布置位（proot 烤死 com.termux 路径）
-                val loader = java.io.File(java.io.File(ctx.filesDir, "usr"), "libexec/proot/loader")
-                if (loader.isFile) {
-                    environment()["PROOT_LOADER"] = loader.absolutePath
-                    environment()["PROOT_LOADER32"] = loader.absolutePath
-                }
-                environment()["LD_LIBRARY_PATH"] = prootLibDir + ":" + termuxLib + ":" + (System.getenv("LD_LIBRARY_PATH") ?: "")
-                environment()["PATH"] = File(ctx.filesDir, "usr/bin").absolutePath + ":/system/bin:/system/xbin"
-                // proot 临时目录默认 /tmp（不存在），指向 cache
-                environment()["PROOT_TMP_DIR"] = ctx.cacheDir.absolutePath
-            }
+            val pb = ProcessBuilder(prootCmd)
+                .directory(ctx.filesDir)
+                .redirectErrorStream(true)
+            PRootEnv.applyHostEnvironment(ctx, pb, noSeccomp = useNoSeccomp)
             val p = pb.start()
             val out = StringBuilder()
-            val reader = java.io.BufferedReader(java.io.InputStreamReader(p.inputStream))
-            val t = Thread { reader.forEachLine { if (out.length < 60_000) out.append(it).append('\n') } }
-            t.isDaemon = true; t.start()
+            val t = Thread {
+                runCatching {
+                    p.inputStream.bufferedReader().forEachLine {
+                        synchronized(out) { if (out.length < 60_000) out.appendLine(it) }
+                    }
+                }
+            }.apply { isDaemon = true; start() }
             val done = p.waitFor(timeoutSec.toLong(), java.util.concurrent.TimeUnit.SECONDS)
             if (!done) {
-                // 超时强杀：destroy 对 sh→proot→命令 链不彻底，destroyForcibly + 确认退出
-                p.destroyForcibly()
-                if (!p.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) p.destroyForcibly()
+                p.destroy()
+                if (!p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)) {
+                    p.destroyForcibly()
+                    p.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                }
                 return "ERROR: 命令超时（${timeoutSec}s，已终止）。长任务请让命令自身后台化（nohup … &）后轮询输出文件"
             }
             val code = p.exitValue()
             t.join(500)
-            // 空输出带 exit code：明确告知命令已执行完，避免模型误判失败而重复执行
-            out.toString().ifBlank { "(exit=$code，无标准输出)" }
-        }.getOrElse { "ERROR: " + (it.message ?: "未知") }
+            synchronized(out) { out.toString() }.ifBlank { "(exit=$code，无标准输出)" }
+        }.getOrElse { "ERROR: ${it.message ?: "未知错误"}" }
     }
 
-    /**
-     * 纯 Java tar 解压（ustar + GNU 长名 'L'/'K' 扩展）：
-     * - 跳过设备文件/fifo（rootfs 里 /dev 条目在非 root 下 mknod 必失败）
-     * - symlink 用 Os.symlink；目录与普通文件按 mode 设权
-     * - 条目名含 ".." 跳过（防路径逃逸）
-     */
     private fun extractTar(input: java.io.InputStream, destRoot: File, onProgress: (Int, Int) -> Unit) {
         val header = ByteArray(512)
         var pendingLongName: String? = null
@@ -312,22 +365,50 @@ object PRootUbuntu {
             when (type) {
                 'L'.code.toByte() -> { pendingLongName = String(data, Charsets.UTF_8).trimEnd('\u0000', ' '); continue }
                 'K'.code.toByte() -> { pendingLongLink = String(data, Charsets.UTF_8).trimEnd('\u0000', ' '); continue }
+                // v0.4.16：PAX 扩展头（x/g）——解析 path=/linkpath=，其余键跳过
+                'x'.code.toByte(), 'g'.code.toByte() -> {
+                    val pax = String(data, Charsets.UTF_8)
+                    Regex("(\\d+) ([^=]+)=([\\s\\S]*?)(?=\\d+ \\w+=|$)").findAll(pax).forEach { m ->
+                        when (m.groupValues[2]) {
+                            "path" -> pendingLongName = m.groupValues[3].trimEnd('\u0000')
+                            "linkpath" -> pendingLongLink = m.groupValues[3].trimEnd('\u0000')
+                        }
+                    }
+                    continue
+                }
             }
             val realName = pendingLongName ?: name
             val linkTarget = pendingLongLink ?: str(157, 257)
             pendingLongName = null; pendingLongLink = null
             if (realName.contains("..")) continue
             val out = File(destRoot, realName.removePrefix("./"))
+            // v0.4.16：真实 tar 权限位（不再全员 +x）
+            val mode = runCatching { Integer.parseInt(String(header, 100, 7, Charsets.UTF_8).trimEnd('\u0000', ' ').trim(), 8) }.getOrDefault(0)
             when (type) {
-                '5'.code.toByte() -> out.mkdirs()
+                '5'.code.toByte() -> {
+                    out.mkdirs()
+                    runCatching { android.system.Os.chmod(out.absolutePath, (mode and 0xFFF) or 0x1C0) }  // 目录保属主 rwx
+                }
                 '2'.code.toByte() -> runCatching {
-                    if (out.exists()) out.delete()
+                    // v0.4.16：悬空软链也能替换 + 父目录先建
+                    out.parentFile?.mkdirs()
+                    java.nio.file.Files.deleteIfExists(out.toPath())
                     java.nio.file.Files.createSymbolicLink(out.toPath(), java.nio.file.Paths.get(linkTarget))
+                }
+                // v0.4.16：硬链接（'1'）——Android 私有目录禁硬链，回退复制源文件
+                '1'.code.toByte() -> {
+                    val linked = File(destRoot, str(0, 100).removePrefix("./"))
+                    runCatching {
+                        out.parentFile?.mkdirs()
+                        java.nio.file.Files.copy(linked.toPath(), out.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                    }
                 }
                 '0'.code.toByte(), 0.toByte() -> {
                     out.parentFile?.mkdirs()
                     out.writeBytes(data)
-                    runCatching { out.setExecutable(true, false) }
+                    // v0.4.16：真实 mode（至少属主 rw，x 位按原样）
+                    runCatching { android.system.Os.chmod(out.absolutePath, ((mode and 0xFFF) or 0x180)) }
                 }
                 else -> { /* '1' hardlink/'3' char/'4' block/'6' fifo：跳过 */ }
             }
